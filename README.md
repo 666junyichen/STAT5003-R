@@ -4,11 +4,14 @@ This repository contains my data science project for the course STAT5003-R at th
 
 ## Description
 
-In this project, I perform a comprehensive analysis of a dataset related to [e.g., diabetes, healthcare, economic data, etc.]. The project includes exploratory data analysis (EDA), statistical modeling, and data visualizations aimed at understanding key patterns and insights within the dataset.
+## Description
 
-The goal of this project is to explore the relationships between various factors, such as [e.g., age, BMI, physical activity], and identify potential predictors of [e.g., diabetes risk, health outcomes, economic growth]. Additionally, I aim to demonstrate how these insights can inform decision-making and further research in [e.g., healthcare, policy, economics].
+In this project, I perform a comprehensive analysis of a healthcare dataset focused on diabetes patient readmissions. The project aims to predict whether a diabetic patient will return to the hospital within 30 days of discharge. Using this dataset, I apply exploratory data analysis (EDA), statistical modeling, and data visualizations to uncover insights and patterns that can predict readmission risks.
 
-This project is implemented using R and Quarto, with the final report being generated as an HTML document, which includes visualizations, statistical analysis, and model evaluations.
+The goal of this project is to build a machine learning model that predicts hospital readmissions based on various factors such as patient demographics, medical history, and hospital data. The project aims to improve healthcare decision-making by identifying high-risk patients and enhancing hospital care quality through predictive insights.
+
+This project is implemented using R and Quarto, with the final report being generated as an HTML document. It includes visualizations, statistical analysis, and evaluation of different machine learning models.
+
 
 ## Files
 
