@@ -1,4 +1,4 @@
-# STAT5003-R - Data Science Project
+# Predicting Hospital Readmissions: A Data-Driven Approach to Diabetes Readmissions
 
 This repository contains my data science project for the course STAT5003-R at the University of Sydney. The project includes R code for data analysis, exploratory data analysis (EDA), and a final report. The project was executed using Quarto and R.
 
