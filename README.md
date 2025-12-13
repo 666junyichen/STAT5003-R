@@ -4,8 +4,6 @@ This repository contains my data science project for the course STAT5003-R at th
 
 ## Description
 
-## Description
-
 In this project, I perform a comprehensive analysis of a healthcare dataset focused on diabetes patient readmissions. The project aims to predict whether a diabetic patient will return to the hospital within 30 days of discharge. Using this dataset, I apply exploratory data analysis (EDA), statistical modeling, and data visualizations to uncover insights and patterns that can predict readmission risks.
 
 The goal of this project is to build a machine learning model that predicts hospital readmissions based on various factors such as patient demographics, medical history, and hospital data. The project aims to improve healthcare decision-making by identifying high-risk patients and enhancing hospital care quality through predictive insights.
