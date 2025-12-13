@@ -4,9 +4,9 @@ This repository contains my data science project for the course STAT5003-R at th
 
 ## Description
 
-In this project, I perform a comprehensive analysis of a dataset related to [insert dataset topic, e.g., diabetes, healthcare, economic data, etc.]. The project includes exploratory data analysis (EDA), statistical modeling, and data visualizations aimed at understanding key patterns and insights within the dataset. 
+In this project, I perform a comprehensive analysis of a dataset related to [eDiabetes, healthcare, economic data, etc.]. The project includes exploratory data analysis (EDA), statistical modeling, and data visualizations aimed at understanding key patterns and insights within the dataset. 
 
-The goal of this project is to explore the relationships between various factors, such as [insert relevant factors or variables, e.g., age, BMI, physical activity], and identify potential predictors of [insert key outcome or analysis, e.g., diabetes risk, health outcomes, economic growth]. Additionally, I aim to demonstrate how these insights can inform decision-making and further research in [insert relevant field or application, e.g., healthcare, policy, economics].
+The goal of this project is to explore the relationships between various factors, such as [e.g., age, BMI, physical activity], and identify potential predictors of [e.g., diabetes risk, health outcomes, economic growth]. Additionally, I aim to demonstrate how these insights can inform decision-making and further research in [e.g., healthcare, policy, economics].
 
 This project is implemented using R and Quarto, with the final report being generated as an HTML document, which includes visualizations, statistical analysis, and model evaluations.
 
