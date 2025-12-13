@@ -16,7 +16,7 @@ This project is implemented using R and Quarto, with the final report being gene
 - **STAT5003_Project Plan & EDA.qmd**: This file contains the code for the planning and exploratory data analysis (EDA).
 - **STAT5003_Assignment1.qmd**: This file contains the R code for Assignment 1.
 - **W11G01_Presentation.qmd**: This is the R code for the presentation of the project.
-- **W11G01_Presentation.qmd**: The final report generated from the Quarto R code.
+- **STAT5003_W11G01_Final_Report.qmd**: The final report generated from the Quarto R code.
 
 ## Installation Instructions
 
