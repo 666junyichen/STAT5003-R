@@ -1,0 +1,2077 @@
+---
+title: "STAT5003: Project Report"
+subtitle: "Workshop 11 Group 01"
+date: "25 May 2025"
+author:
+  - name: "jche0758"
+    affiliation: "SID: 520110054"
+  - name: "lals0119"
+    affiliation: "SID: 540615841"
+  - name: "nals0930"
+    affiliation: "SID: 540927401"
+  - name: "nkha0389"
+    affiliation: "SID: 540829493"
+  - name: "yaff0377"
+    affiliation: "SID: 530784645"
+format:
+  html:
+    code-fold: true
+    code-tools: true
+    self-contained: true
+    theme: cosmo
+editor: visual
+toc: true
+bibliography: references.bib
+execute:
+  cache: true
+---
+
+```{=html}
+<style>
+.nav-tabs .nav-link {
+  font-size: 11pt;
+  font-weight: bold;
+}
+</style>
+```
+
+```{r}
+#| include: false
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#load libraries
+library(tidyverse)   #for data science, loads other core libraries
+library(kableExtra)  #for table styling
+library(scales)      #for scaling axes
+library(reshape2)    #for reshaping data
+library(fmsb)        #for radar/spider charts
+library(patchwork)   #for combining ggplots
+library(plotly)      #for interactive ggplots
+library(caret)       #for model training/tuning/evaluation
+library(MLmetrics)   #for metrics like F1 Score
+library(gbm)         #for Gradient Boosting Machine models
+library(pROC)        #for ROC curve and AUC calculation
+library(viridis)     #for color palettes
+library(glmnet)      #for Lasso/Ridge regression
+library(doParallel)  #for parallel model training
+library(tree)        #for Decision Tree
+library(rpart)       #for Decision Tree
+library(rpart.plot)  #for plotting Decision Tree
+library(smotefamily) #for balancing classes
+library(kernlab)
+library(gridExtra)
+
+set.seed(5003)
+
+#load the dataset
+diabetic_data <- read_csv("dataset/diabetic_data.csv", show_col_types = FALSE)
+```
+:::
+
+### 1. Problem Definition {style="font-size: 14pt;"}
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Hospital readmissions are a critical healthcare problem due to the significant impact they have on patient's health, healthcare costs, and the overall efficiency of the healthcare system. Hospital readmissions, primarily those occurring within 30 days of discharge, are a key indicator of the healthcare quality provided to patients with chronic conditions like diabetes. Predicting diabetic patient readmissions is significant for improving the overall healthcare quality and implementing proper post-discharge support and intervention plans, ultimately improving patient's long-term health and reducing unnecessary healthcare costs [@sharma2019].
+
+This project addresses a multi-class classification task that aims to **to predict diabetic patient readmission status within 30 days of discharge**, using data collected from 130 United States (US) hospitals between 1999 and 2008. The dataset consists of various attributes on patient demographics, medical and hospitalization records, and treatment procedures, providing details on the factors contributing to patient readmission status [@strack2014a]. This multi-class classification task has one target variable readmitted $y$ with three distinct classes.
+
+$$
+y = \begin{cases} 
+<30 & \text{(patient was readmitted within 30 days)} \\
+>30 & \text{(patient was readmitted after 30 days)} \\
+\text{No} & \text{(patient was not readmitted)} 
+\end{cases}
+$$
+
+This classification task is thoughtfully framed around the context of a real-world clinical dataset that reflects the complexity of diabetic patient profiles and introduces challenges that must be addressed to develop reliable predictive models. Developing a classification model to predict diabetic patient readmission status will contribute to improving healthcare quality, improving patient health and long-term health outcomes, avoiding unnecessary readmission costs, supporting clinical decision-making, and improving hospital's operational efficiency. Furthermore, identifying patterns in readmission contributes to data-driven health policy and healthcare plan [@vrrejiraj2023].
+:::
+
+### 2. Data Description {style="font-size: 14pt;"}
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The dataset used in this assignment titled **"Diabetes 130-US Hospitals for Years 1999-2008"** was obtained from the **Health Facts database**, a national warehouse that collects comprehensive clinical records from hospitals across the US [@strack2014a]. The raw dataset contains **101,767 records** and **50 attributes**, collected from **130 hospitals** between 1999 and 2008. The dataset includes **14** **categorical attributes** representing patient and hospital details, such as race, gender, and diagnoses, **23 medication-related attributes** representing the different medication the patient is under (e.g., metformin, insulin, etc.), and **13** **numerical attributes** representing various hospitalization data such as lab test results, hospitalization duration, and number of lab procedures.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Data Dictionary</summary>
+
+```{r}
+#create table for dataset features name and type
+datatype_tbl <- tibble(
+  Variable = names(diabetic_data),
+  Type = sapply(diabetic_data, class)
+)
+
+#split into variable-type pairs
+pairs <- datatype_tbl %>%
+  mutate(Pair = map2(Variable, Type, ~c(.x, .y))) %>%
+  pull(Pair) %>%
+  unlist()
+
+#set a table of 6 columns for better display
+num_cols <- 6 
+rows_needed <- ceiling(length(pairs) / num_cols)
+length(pairs) <- rows_needed * num_cols 
+
+#set column names and conver to matrix
+col_names <- rep(c("Variable", "Type"), num_cols / 2)
+pair_matrix <- matrix(pairs, ncol = num_cols, byrow = TRUE)
+
+#display table using kable
+kable(pair_matrix, col.names = col_names, escape = FALSE) %>%
+  kable_styling(full_width = FALSE)
+```
+
+</details>
+:::
+
+### 3. Cleaning & Preparation {style="font-size: 14pt;"}
+
+::::::::::::::::::: panel-tabset
+## Missing Values
+
+::: {style="text-align: justify; font-size: 10pt;"}
+To identify missing values, the dataset was scanned for both standard (NA values) and non-standard forms ("?" and "Unknown/Invalid") of missing values using `is.na()` function and custom built function. These are often used to indicate missing or uncertain information. After thorough inspection of the dataset's missing values eight features were identified with non-standard missing values. The figure below displays the missing values distribution, all these missing values were replaced with NA for uniformity.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#create empty vectors to store results
+column_names <- c()
+question_marks <- c()
+empty_strings <- c()
+unknowns <- c()
+unknown_invalids <- c()
+na_values <- c()
+
+#loop through each column
+for (i in 1:ncol(diabetic_data)) {
+  col_name <- colnames(diabetic_data)[i]
+  col_data <- diabetic_data[[i]] 
+
+  #count each missing type
+  qmark <- sum(col_data == "?", na.rm = TRUE)
+  empty <- sum(col_data == "", na.rm = TRUE)
+  unk <- sum(col_data == "Unknown", na.rm = TRUE)
+  unk_inv <- sum(col_data == "Unknown/Invalid", na.rm = TRUE)
+  na_val <- sum(is.na(col_data))
+
+  #only record if at least one missing-like value exists
+  if (qmark + empty + unk + unk_inv + na_val > 0) {
+    column_names <- c(column_names, col_name)
+    question_marks <- c(question_marks, qmark)
+    empty_strings <- c(empty_strings, empty)
+    unknowns <- c(unknowns, unk)
+    unknown_invalids <- c(unknown_invalids, unk_inv)
+    na_values <- c(na_values, na_val)
+  }
+}
+
+#combine all into one data frame (after the loop)
+missing_summary <- data.frame(
+  Column = column_names,
+  Question_Mark = question_marks,
+  Empty_String = empty_strings,
+  Unknown = unknowns,
+  Unknown_Invalid = unknown_invalids,
+  NA_Values = na_values
+)
+
+#prepare data for ggplot
+missing_long <- missing_summary %>%
+  pivot_longer(
+    cols = c(Question_Mark, Empty_String, Unknown, Unknown_Invalid, NA_Values),
+    names_to = "Type",
+    values_to = "Count"
+  )
+
+#plot missing value count
+p <- ggplot(missing_long, aes(x = reorder(Column, -Count), y = Count, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Summary of Missing Values Counts",
+    x = "Feature",
+    y = "Missing Values Count",
+    fill = "Missing Values Type"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 40, hjust = 1),
+    plot.title = element_text(face = "bold", size = 10, hjust = 0.5))
+
+#make plot interactive
+ggplotly(p)
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The following features were removed for the dataset as more than **40%** of their values are **missing values.** Additionally, these features are not essential for building a reliable predictive model nor impact the classification task to predict diabetic patient readmission status within 30 days of discharge.
+
+-   **weight** represents the patient's body weight. More than 97% of weight values are missing. Due to its lack of completeness, it is not practical to include this feature.
+-   **payer_code** refers to the patient's method of payment or insurance with approximately 40% missing data. This feature is more administrative than predictive and has minimal relevance to the classification task.
+-   **medical_specialty** indicates the specialty of the admitting physician, with nearly 50% of missing values. Additionally, this feature contains a large number of inconsistent and sparse categories, which will not be beneficial during model building and training.
+
+Since the dataset is already large and only a small number of observations had missing values in important features like gender, and diagnosis codes, it was decided to remove those observations reducing the dataset from 101,766 to 98,052 observations. Additionally, features like encounter_id (a unique ID for each hospital visit) and patient_nbr (a unique ID for each patient) were removed as they do not provide useful information for predicting diabetic patient readmission status.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#replace "?" with NA
+diabetic_data[diabetic_data == "?"] <- NA
+
+#replace "Unknown/Invalid" with NA
+diabetic_data[diabetic_data == "Unknown/Invalid"] <- NA
+
+#remove the weight, payer_code, medical_specialty  column
+diabetic_data <- diabetic_data %>% select(-c(weight, payer_code, medical_specialty))
+
+#remove rows that contain any NA values
+diabetic_data <- na.omit(diabetic_data)
+
+#remove the encounter ID and patient number columns
+diabetic_data <- diabetic_data %>% select(-c(encounter_id, patient_nbr))
+```
+:::
+
+## Features Engineering
+
+::: {style="text-align: justify; font-size: 10pt;"}
+To manage high-cardinality features, the number of unique values in each column are counted. The result reveled that most medication-related features had only 2–4 unique values, making them straightforward to include in the model. However, the diagnosis features (diag_1, diag_2, and diag_3) contained hundreds of unique ICD-9 codes, the official system of assigning codes to diagnoses associated with hospital in the US [@strack2014a]. Using the diagnosis codes directly would be complex, highly uninterpretable, and may lead to overfitting. Thus, ICD-9 codes were **mapped** into broader disease groups, following guidelines from the reference documentation [@strack2014a]. This transformation preserved the medical meaning while reducing the number of categories. ICD-9 codes that did not fall into any of the defined ICD-9 groupings lacked clinical meaning and were thus removed from the analysis. Removing these observations reduces the risk of introducing noise or ambiguity during model training.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+# === diag_1 ===
+diabetic_data$diag_1_prefix <- substr(diabetic_data$diag_1, 1, 3)
+diabetic_data$diag_1_num <- as.numeric(diabetic_data$diag_1_prefix)
+
+diabetic_data$diag_1_group <- NA
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 
+                             390 & diabetic_data$diag_1_num <= 
+                             459 | diabetic_data$diag_1_num == 785] <- "Circulatory"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 
+                             460 & diabetic_data$diag_1_num <= 
+                             519 | diabetic_data$diag_1_num == 
+                             786] <- "Respiratory"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 
+                             520 & diabetic_data$diag_1_num <= 
+                             579 | diabetic_data$diag_1_num == 
+                             787] <- "Digestive"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 
+                             250 & diabetic_data$diag_1_num < 
+                             251] <- "Diabetes"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 
+                             800 & diabetic_data$diag_1_num <= 
+                             999] <- "Injury"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 
+                             710 & diabetic_data$diag_1_num <= 
+                             739] <- "Musculoskeletal"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 
+                             580 & diabetic_data$diag_1_num <= 
+                             629 | diabetic_data$diag_1_num == 
+                             788] <- "Genitourinary"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 
+                             140 & diabetic_data$diag_1_num <= 
+                             239] <- "Neoplasms"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 
+                             1 & diabetic_data$diag_1_num <= 
+                             139] <- "Infectious"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 
+                             290 & diabetic_data$diag_1_num <= 
+                             319] <- "Mental Disorders"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num %in% c(780, 781, 784) |
+                             (diabetic_data$diag_1_num >= 
+                                790 & diabetic_data$diag_1_num <= 
+                                799)] <- "Other"
+diabetic_data$diag_1_group[is.na(diabetic_data$diag_1_group)] <- "Unknown"
+
+# === diag_2 ===
+diabetic_data$diag_2_prefix <- substr(diabetic_data$diag_2, 1, 3)
+diabetic_data$diag_2_num <- as.numeric(diabetic_data$diag_2_prefix)
+
+diabetic_data$diag_2_group <- NA
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 
+                             390 & diabetic_data$diag_2_num <= 
+                             459 | diabetic_data$diag_2_num == 
+                             785] <- "Circulatory"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 
+                             460 & diabetic_data$diag_2_num <= 
+                             519 | diabetic_data$diag_2_num == 
+                             786] <- "Respiratory"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 
+                             520 & diabetic_data$diag_2_num <= 
+                             579 | diabetic_data$diag_2_num == 
+                             787] <- "Digestive"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 
+                             250 & diabetic_data$diag_2_num < 
+                             251] <- "Diabetes"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 
+                             800 & diabetic_data$diag_2_num <= 
+                             999] <- "Injury"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 
+                             710 & diabetic_data$diag_2_num <= 
+                             739] <- "Musculoskeletal"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 
+                             580 & diabetic_data$diag_2_num <= 
+                             629 | diabetic_data$diag_2_num == 
+                             788] <- "Genitourinary"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 
+                             140 & diabetic_data$diag_2_num <= 
+                             239] <- "Neoplasms"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 
+                             1 & diabetic_data$diag_2_num <= 
+                             139] <- "Infectious"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 
+                             290 & diabetic_data$diag_2_num <= 
+                             319] <- "Mental Disorders"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num %in% c(780, 781, 784) |
+                             (diabetic_data$diag_2_num >= 
+                                790 & diabetic_data$diag_2_num <= 
+                                799)] <- "Other"
+diabetic_data$diag_2_group[is.na(diabetic_data$diag_2_group)] <- "Unknown"
+
+# === diag_3 ===
+diabetic_data$diag_3_prefix <- substr(diabetic_data$diag_3, 1, 3)
+diabetic_data$diag_3_num <- as.numeric(diabetic_data$diag_3_prefix)
+
+diabetic_data$diag_3_group <- NA
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 
+                             390 & diabetic_data$diag_3_num <= 
+                             459 | diabetic_data$diag_3_num == 
+                             785] <- "Circulatory"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 
+                             460 & diabetic_data$diag_3_num <= 
+                             519 | diabetic_data$diag_3_num == 
+                             786] <- "Respiratory"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 
+                             520 & diabetic_data$diag_3_num <= 
+                             579 | diabetic_data$diag_3_num == 
+                             787] <- "Digestive"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 
+                             250 & diabetic_data$diag_3_num < 
+                             251] <- "Diabetes"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 
+                             800 & diabetic_data$diag_3_num <= 
+                             999] <- "Injury"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 
+                             710 & diabetic_data$diag_3_num <= 
+                             739] <- "Musculoskeletal"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 
+                             580 & diabetic_data$diag_3_num <= 
+                             629 | diabetic_data$diag_3_num == 
+                             788] <- "Genitourinary"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 
+                             140 & diabetic_data$diag_3_num <= 
+                             239] <- "Neoplasms"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 
+                             1 & diabetic_data$diag_3_num <= 
+                             139] <- "Infectious"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 
+                             290 & diabetic_data$diag_3_num <= 
+                             319] <- "Mental Disorders"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num %in% c(780, 781, 784) |
+                             (diabetic_data$diag_3_num >= 
+                                790 & diabetic_data$diag_3_num <= 
+                                799)] <- "Other"
+diabetic_data$diag_3_group[is.na(diabetic_data$diag_3_group)] <- "Unknown"
+
+
+#drop original diagnosis columns: diag_1, diag_2, diag_3
+diabetic_data <- diabetic_data %>% select(-c(diag_1, diag_2, diag_3))
+
+#drop helper columns used for processing
+diabetic_data <- diabetic_data %>% select(-c(diag_1_prefix, diag_2_prefix, diag_3_prefix))
+diabetic_data <- diabetic_data %>% select(-c(diag_1_num, diag_2_num, diag_3_num))
+
+diabetic_data$diag_1_group[diabetic_data$diag_1_group == "Unknown"] <- NA
+diabetic_data$diag_2_group[diabetic_data$diag_2_group == "Unknown"] <- NA
+diabetic_data$diag_3_group[diabetic_data$diag_3_group == "Unknown"] <- NA
+
+diabetic_data <- na.omit(diabetic_data)
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Two features discharge_disposition_id (26 unique values) and admission_source_id (15 unique values) were further dropped from the dataset due to their high cardinality and the absence of associated label mappings. Furthermore, all character-type features were converted to factors to ensure categorical variables are properly recognized and interpreted by statistical models.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+diabetic_data <- diabetic_data %>% select(-c(discharge_disposition_id, admission_source_id))
+
+#convert all character columns to factors
+for (col in names(diabetic_data)) {
+  if (class(diabetic_data[[col]]) == "character") {
+    diabetic_data[[col]] <- as.factor(diabetic_data[[col]])
+  }
+}
+```
+:::
+
+## Outliers
+
+::: {style="text-align: justify; font-size: 10pt;"}
+To address outliers in a statistically robust manner, numerical features were examined for potential outliers using the Interquartile Range $IQR$ method. The numerical features in the dataset were first identified using `is.numeric()` function. For each numeric feature, the first quartile $Q1$, third quartile $Q3$, lower bound, and upper bound (defined as $Q1 -1.5 × IQR$ and $Q3 + 1.5 × IQR$, respectively) are calculated. Observations falling outside the lower and upper bounds were flagged as outliers. The boxplots below provides a comparative view of numeric features with detected outliers. Features such as num_lab_procedures, num_medications, and various visits (number_emergency, number_inpatient, number_outpatient) exhibit a clear right-skewedness with extreme upper values. These high-end values may represent legitimate high-risk patients or are actual outliers.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, fig.align='center'}
+#identify numeric columns
+numeric_cols <- diabetic_data %>% select(where(is.numeric))
+
+#loop over numeric columns and calculate outliers using IQR
+outlier_summary <- numeric_cols %>%
+  map_df(~{
+    Q1 <- quantile(.x, 0.25, na.rm = TRUE)
+    Q3 <- quantile(.x, 0.75, na.rm = TRUE)
+    IQR <- Q3 - Q1
+    lower_bound <- Q1 - 1.5 * IQR
+    upper_bound <- Q3 + 1.5 * IQR
+    outlier_count <- sum(.x < lower_bound | .x > upper_bound, na.rm = TRUE)
+    tibble(Outlier_Count = outlier_count)
+  }, .id = "Feature") %>%
+  arrange(desc(Outlier_Count))
+
+#reshape to long format for ggplot
+diabetic_data_long <- diabetic_data[, outlier_summary$Feature] %>%
+  mutate(row_id = row_number()) %>%
+  pivot_longer(cols = -row_id, names_to = "Feature", values_to = "Value")
+
+#plot boxplot using ggplot
+p <- ggplot(diabetic_data_long, 
+            aes(x = reorder(Feature, -Value, FUN = median), 
+                y = Value, 
+                color = Feature)
+            ) +
+  geom_boxplot() +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.y = element_text(size = 10),
+    axis.text.x = element_text(angle = 40),
+    plot.title = element_text(face = "bold", size = 10, hjust = 0.3),
+    legend.position = "none"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.1))) +
+  labs(
+    title = "Numeric Features with Outliers",
+    x = "Feature",
+    y = "Value"
+  )
+
+#make plot interactive
+ggplotly(p)
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Rather than removing feature with outliers, we chose to remove the entire observation containing outlier values to prevent these extreme cases from introducing noise during model training and evaluation. These outliers may represent data entry errors, rare cases, or extreme behavior that is not generalizable. Their presence can significantly affect the ability of many machine learning models to learn representative patterns. Furthermore, normalization techniques such as Min-Max scaling are highly sensitive to extreme values, if normalization is applied before removing outliers, the min and max values will be skewed, and most of the data will be squished into a narrow range near 0, making it harder for the model to learn from the majority of the data. Additionally, the dataset has a large number of observations with various combinations that are sufficient for the model to learn and generalize from. Thus, observations with outliers values are removed resulting in a dataset with 39,304 observations and 43 features.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#create a logical index of rows to keep (initialize with TRUEs)
+keep_rows <- rep(TRUE, nrow(diabetic_data))
+
+#loop over numeric columns and mark rows with outliers
+for (col in names(numeric_cols)){
+  values <- diabetic_data[[col]]
+  Q1 <- quantile(values, 0.25)
+  Q3 <- quantile(values, 0.75)
+  IQR <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+
+  #identify outliers for this feature
+  outlier_mask <- values < lower_bound | values > upper_bound
+  
+  #mark FALSE for rows that are outliers in this column
+  keep_rows <- keep_rows & !outlier_mask
+}
+
+#apply the filter once
+diabetic_data <- diabetic_data[keep_rows, ]
+```
+:::
+
+## Normalization
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The following six features had relatively high maximum values or wide ranges: num_lab_procedures, num_medications, number_outpatient, number_emergency, number_inpatient, and number_diagnoses. These features were normalized using Min-Max scaling, transforming their values to fall between 0 and 1. This ensures that no single feature dominates the learning process by having larger numeric values. Features that had small ranges or represents categorical values (such as admission_type_id) were left unchanged, as normalization is not meaningful nor necessary in those cases. It is to be noted that zero was the most frequent value in number_outpatient and number_emergency features. So when normalization is applied, this resulted in null values across all records of number_outpatient and number_emergency due to zero division during normalization application (as part of the normalization method, where the max and min values are subtracted from each other in the denominator). Therefore, since these two variables do not provide any useful information and might introduce noise during modelling, they were dropped.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+normalize <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)))
+}
+
+#apply normalization to selected features
+diabetic_data$num_lab_procedures   <- normalize(diabetic_data$num_lab_procedures)
+diabetic_data$num_medications      <- normalize(diabetic_data$num_medications)
+diabetic_data$number_outpatient    <- normalize(diabetic_data$number_outpatient)
+diabetic_data$number_emergency     <- normalize(diabetic_data$number_emergency)
+diabetic_data$number_inpatient     <- normalize(diabetic_data$number_inpatient)
+diabetic_data$number_diagnoses     <- normalize(diabetic_data$number_diagnoses)
+
+#drop zero only features
+diabetic_data$number_outpatient <- NULL
+diabetic_data$number_emergency <- NULL
+```
+:::
+
+## Zero Variance
+
+::: {style="text-align: justify; font-size: 10pt;"}
+As part of final check and validation of the dataset, we noticed that there are several categorical features (acetohexamide, citoglipton, metformin-pioglitazone, metformin-rosiglitazone, examide) that contains only one unique value, "No". These features represent a certain type of medication used as treatment for patients. Keeping those features will cause two issues during modelling:
+
+1.  Since there is no variability in these features (their value do not change), they will not help the model to learn any useful pattern or relationship between these features and the target variable.
+
+2.  It was noticed that many algorithms such as Gradient Boosting, required at least two unique values per feature to compute the split. Therefore, including a feature with a single unique value will lead to fitting error during modeling and training. Thys, these variables (with one unique value) were excluded from the dataset to ensure computational stability.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#drop single value features
+diabetic_data$acetohexamide <- NULL
+diabetic_data$citoglipton <- NULL
+diabetic_data$`metformin-pioglitazone` <- NULL
+diabetic_data$`metformin-rosiglitazone` <- NULL
+diabetic_data$examide <- NULL
+diabetic_data$glipizide.metformin <- NULL
+```
+:::
+:::::::::::::::::::
+
+### 4. Exploratory Analysis & Visualisation {style="font-size: 14pt;"}
+
+::::::::::::: panel-tabset
+## Target Variable
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The bar chart below visualizes the distribution of the target variable readmitted. It can be noted that more than 50% of patients were not readmitted, around 30% of patients were readmitted after 30 days, and only 10% were readmitted within 30 days. The bar chart reveals a significant class imbalance, where the high-risk class readmitted within 30 days (\<30) being the minority class. This class imbalance highlights the need for class weights adjustment during modeling to improve classifier sensitivity.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, fig.align='center'}
+#summary table with three columns and rename them as follow
+readmit_dist <- diabetic_data %>%
+  dplyr::count(readmitted, name = "Total_Patients") %>%
+  dplyr::mutate(
+    Proportion = Total_Patients / sum(Total_Patients),
+    Percentage = percent(Proportion, accuracy = 1)
+  ) %>%
+  rename(`Readmission Category` = readmitted) %>%
+  select(`Readmission Category`, Total_Patients, Percentage)
+
+#plot readmission class distribution
+p <- ggplot(readmit_dist, 
+            aes(x = reorder(`Readmission Category`, -Total_Patients), 
+                y = Total_Patients, 
+                fill = `Readmission Category`)
+            ) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(
+    aes(label = paste0(Percentage, "\n(", comma(Total_Patients), ")")),
+    vjust = -0.3,
+    size = 3,
+    fontface = "bold"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.1))) +
+  labs(
+    title = "Distribution of Readmission Status",
+    x = "Readmission Category",
+    y = "Number of Patients"
+  ) +
+  theme_minimal(base_size = 10)+
+   theme(
+    plot.title = element_text(face = "bold", size = 10, hjust = 0.5))
+
+#make plot interactive
+ggplotly(p)
+```
+:::
+
+## Patients Demographic
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Patients demographic features such as gender, age, and race were analyzed to uncover readmission patterns and understand where the bulk of readmissions is coming from. The figure below highlights that readmission status are relatively balanced between males and females, indicating that gender has no major impact. Looking at the age groups, the highest readmission counts occurs with patients that are between 50 and 80 years old, indicating that age is a possible factor for impacting readmission status. The higher counts within caucasian patients reflects population volume rather than higher risk of readmission, as caucasian patients make up the largest racial group within the dataset; therefore, proportions analysis was also conducted to provide a more accurate comparison.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, fig.align='center'}
+#gender plot
+p1 <- ggplot(diabetic_data, aes(x = gender, fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Gender",
+    fill = "Readmitted"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.2),
+    legend.position = "right"
+  )
+
+#age plot
+p2 <- ggplot(diabetic_data, aes(x = age, fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Age",
+    fill = "Readmitted"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.2),
+    axis.text.x = element_text(angle = 40, hjust = 0.2)
+  )
+
+#race plot
+p3 <- ggplot(diabetic_data, aes(x = race, fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Race",
+    fill = "Readmitted"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.2),
+    axis.text.x = element_text(angle = 40, hjust = 0.2)
+  )
+
+#convert plots to plotly objects
+gp1 <- ggplotly(p1)
+gp2 <- ggplotly(p2)
+gp3 <- ggplotly(p3)
+
+#manually remove duplicated legends from p2 and p3
+for (i in seq_along(gp2$x$data)) {
+  gp2$x$data[[i]]$showlegend <- FALSE
+}
+for (i in seq_along(gp3$x$data)) {
+  gp3$x$data[[i]]$showlegend <- FALSE
+}
+
+#combine plots horizontally and make plot interactive
+subplot_combined <- subplot(
+  gp1,
+  gp2,
+  gp3,
+  nrows = 1,
+  shareX = FALSE,
+  shareY = FALSE,
+  titleX = TRUE,
+  titleY = FALSE
+) %>%
+  layout(
+    title = list(
+      text = "Patient Readmissions by Gender, Age, and Race",
+      x = 0.5,
+      xanchor = "center",
+      font = list(size = 16, family = "Arial", color = "#333333")
+    ),
+    annotations = list(
+      list(
+        text = "Number of Patients",
+        x = 0,
+        xref = "paper",
+        y = 0.5,
+        yref = "paper",
+        showarrow = FALSE,
+        font = list(size = 12),
+        textangle = -90
+      )
+    )
+  )
+
+#display the final result
+subplot_combined
+```
+:::
+
+## Patient Profiles
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The radar chart below provides a comparative overview of patient profiles across the three readmission classes. Patients who were readmitted within 30 days exhibit higher counts across most variables, including number of medications, length of hospital stay, emergency room visits, and inpatient encounters, suggesting a more complicated medical profile. In contrast, patients who were not readmitted generally demonstrate lower counts across most variables, with slight exception on the number of procedures, which may reflect more planned preventive care or early interventions rather than medical complications.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, fig.align='center'}
+#get the average profile for each readmission group
+radar_data <- diabetic_data %>%
+  group_by(readmitted) %>%
+  summarise(
+    Medications = mean(num_medications, na.rm = TRUE),
+    Procedures = mean(num_procedures, na.rm = TRUE),
+    TimeInHospital = mean(time_in_hospital, na.rm = TRUE),
+    InpatientVisits = mean(number_inpatient, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#fmsb needs the first two rows to define the range (max + min) of the axes
+radar_chart <- rbind(
+  apply(radar_data[,-1], 2, max),
+  apply(radar_data[,-1], 2, min),
+  radar_data[,-1]
+)
+
+#convert to numeric
+radar_chart <- as.data.frame(lapply(radar_chart, as.numeric))
+rownames(radar_chart) <- c("Max", "Min", radar_data$readmitted)
+
+#set custom color-blind friendly colors
+custom_colors <- c("#21908C", "#440154", "#5DC863")
+colors_fill <- scales::alpha(custom_colors, 0.3)
+
+#plot radar chart
+radarchart(
+  radar_chart,
+  axistype = 1,
+  pcol = custom_colors,
+  pfcol = colors_fill,
+  plwd = 2,
+  plty = 1,
+  cglcol = "grey",
+  cglty = 1,
+  axislabcol = "grey30",
+  vlcex = 0.85,
+  title = "Patient Profile Comparison by Readmission Status"
+)
+
+#add a legend to keep it readable
+legend("topright", legend = radar_data$readmitted,
+       bty = "n", pch = 20, col = custom_colors, text.col = "black", cex = 0.9)
+```
+:::
+
+## Diagnosis Patterns
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The feature engineering carried out on the diagnosis codes feature, in the clean and prepare phase, facilitated an interpretable analysis on the impact of the diagnosis categories on the patient readmission status. The chart shows the distribution of diagnosis categories the three diagnosis levels (diag_1, diag_2, and diag_3), grouped by readmission status. Circulatory and Other conditions are the most frequent across all diagnosis levels, especially in the primary diagnosis (diag_1). In contrast, conditions like Diabetes and Neoplasms are more frequently recorded as secondary or tertiary issues, suggesting their significant impact on patient readmission status. Overall, this visualization provides insights on the underlying medical conditions that are possibly associated with hospital readmission, uncovering readmission pattrens.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, fig.align='center'}
+#combine diagnosis group variables for plotting
+diag_long <- diabetic_data %>%
+  select(readmitted, diag_1_group, diag_2_group, diag_3_group) %>%
+  pivot_longer(cols = starts_with("diag_"), names_to = "Diagnosis_Level", values_to = "Diagnosis_Group")
+
+#clean label names
+diag_long$Diagnosis_Level <- recode(diag_long$Diagnosis_Level,
+                                    diag_1_group = "Diagnosis 1",
+                                    diag_2_group = "Diagnosis 2",
+                                    diag_3_group = "Diagnosis 3")
+
+#plot bar charts
+p <- ggplot(diag_long, aes(x = fct_infreq(Diagnosis_Group), fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) +  #color-blind friendly
+  labs(
+    title = "Readmission Count by Diagnosis",
+    x = "Diagnosis Group",
+    y = "Number of Patients",
+    fill = "Readmitted"
+  ) +
+  facet_wrap(~ Diagnosis_Level, ncol = 1, scales = "free_x") +
+  theme_minimal(base_size = 8) +
+  theme(
+    axis.text.x = element_text(angle = 20, hjust = 1, face = "bold"),
+    strip.text = element_text(face = "bold"),
+    legend.position = "right"
+  )
+ggplotly(p, height = 500)
+```
+:::
+
+## Feature Correlation
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The heatmap below presents the correlation matrix for the numeric features in the dataset, offering a snapshot of how these numeric features are correlated within the dataset. Overall, the correlations revealed that most numeric features are moderately correlated, indicating that each numeric features provide different types of information rather than association. key observations include:
+
+-   A moderate positive correlation between time_in_hospital and both num_lab_procedures (0.33) and num_medications (0.43), indicating longer hospital stays are associated with more procedures and medication.
+-   A low positive correlation between between most features, such as number_inpatient and num_procedures, indicating their independent value.
+
+The correlation matrix supported the inclusion the dataset numeric features in the classifier modeling, as they appear to contribute unique information that supports the underlining classification goal to predict diabetic patient readmission status within 30 days of discharge.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, fig.align='center'}
+#identify numeric columns
+numeric_vars <- diabetic_data[sapply(diabetic_data, is.numeric)]
+numeric_vars <- numeric_vars[, colSums(!is.na(numeric_vars)) > 0]
+
+
+#prepare correlation matrix
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+cor_df <- melt(cor_matrix)
+
+#base heatmap with better visual harmony
+p <- ggplot(cor_df, aes(x = Var2, y = Var1, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(value, 2)), color = "black", size = 3.5) +
+  scale_fill_gradient2(
+    low = "#440154",      # red for negative
+    mid = "white",        # neutral
+    high = "#21908C",     # green for positive
+    midpoint = 0,
+    limits = c(-1, 1),
+    name = "Correlation"
+  ) +
+  labs(
+    title = "Correlation Between Patient Numeric Features",
+    x = NULL, y = NULL
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 25, hjust = 1, face = "bold"),
+    axis.text.y = element_text(face = "bold"),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+ggplotly(p)
+```
+:::
+:::::::::::::
+
+##### **Exploratory Analysis Insights and Summary** {style="font-size: 12pt;"}
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The exploratory analysis provided valuable insights into the factors that are most likely to influence hospital readmission among diabetic patients. Though some findings confirmed our initial expectations of the underlying dataset, others revealed more insightful patterns.
+
+-   The target variable readmission revealed that majority of patient were not readmitted or were readmitted after 30 days. A smaller subset of patients, yet medically significant, were readmitted within 30 days, which confirmed a class imbalance that will be accounted for during modeling stage.
+-   Demographics such as gender, race and age showcased some variation. Older age group more specifically (60-80) tend to dominate the readmission scene, which matches with chronical conditions such as diabetes.
+-   The diagnostic groups helped tremendously with narrowing down most impactfull features. Circulatory and Respiratory diagnoses appear more frequently and subsequently have higher readmission. On the other hand, conditions such as Neoplasms (cancer) surprisingly showed low readmission, and that is likely due to follow-ups being handled by outpatient or via specialized clinic.
+-   The correlation heatmaps confirmed a low correlation among numerical features, indicating low redundancy among features, which is ideal for building a classification model as each feature contributes different information.
+
+These findings established a solid foundation to address model selection, training, evaluation, and enhancement.
+:::
+
+### 5. Evaluation & Model Comparison {style="font-size: 14pt;"}
+
+##### **Data Division and Modelling Setup** {style="font-size: 12pt;"}
+
+::: {style="text-align: justify; font-size: 10pt;"}
+To ensure dataset suitability for modelling, the target variable (readmitted) class labels were safely renamed to valid and interpretable names, as the current class labels contains values with symbols (\<, \>) such as "\<30" and "\>30". These values with symbols violate the naming rules in R required for probability prediction outputs. The class labels were safely renamed to: "\<30" → "less_30", "\>30" → "greater_30", "NO" → "no". After completing all preprocessing steps, **the final dataset contains 39,304 records and 36 features**. We adopted **stratified sampling to divide the dataset** into a training subset and a test subset, while maintaining the category distribution of the target variable readmitted. Ultimately, the division ratio of the dataset is 50-50, ensuring that the model evaluation can reflect the actual performance of all categories (no, greater_30, and less_30). The ratio of split (50-50) was selected since the resulting dataset is already large, and to reduce model training time. A fixed seed (set.seed(5003)) was used to ensure reproducibility of the split. All models were trained using a consistent setup to ensure fair comparison among selected models. A **5-fold cross-validation repeated three times** was setup for all models during training.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#fix target variable labels (caret does not accept < or > in level names)
+diabetic_data$readmitted <- as.character(diabetic_data$readmitted)
+diabetic_data$readmitted[diabetic_data$readmitted == "<30"]  <- "less_30"
+diabetic_data$readmitted[diabetic_data$readmitted == ">30"]  <- "greater_30"
+diabetic_data$readmitted[diabetic_data$readmitted == "NO"]   <- "no"
+diabetic_data$readmitted <- as.factor(diabetic_data$readmitted)
+
+#convert all character columns in the dataset to factor
+diabetic_data[] <- lapply(diabetic_data, function(x) {
+  if (is.character(x)) factor(x) else x
+})
+
+#split the data into 50-50 training and testing
+inTrain <- createDataPartition(diabetic_data$readmitted, p = 0.5, list = FALSE)
+train_data <- diabetic_data[inTrain, ]
+test_data  <- diabetic_data[-inTrain, ]
+
+#drop unused factor levels 
+train_data <- droplevels(train_data)
+test_data <- droplevels(test_data)
+
+#drop all NA and ensure column names are valid
+train_data <- train_data[, sapply(train_data, function(x) !all(is.na(x)))] 
+names(train_data) <- make.names(names(train_data), unique = TRUE)
+
+test_data <- test_data[, sapply(test_data, function(x) !all(is.na(x)))] 
+names(test_data) <- make.names(names(test_data), unique = TRUE)
+
+#ensure test_data factor levels match training
+for (col in names(test_data)) {
+  if (is.factor(test_data[[col]]) && is.factor(train_data[[col]])) {
+    test_data[[col]] <- factor(test_data[[col]], levels = levels(train_data[[col]]))
+  }
+}
+
+#identify all factor columns with <2 levels
+one_level_factors <- sapply(train_data, function(x) is.factor(x) && length(levels(x)) < 2)
+
+#drop one level data from both datasets
+train_data <- train_data[, !one_level_factors]
+test_data  <- test_data[, names(train_data)]
+```
+:::
+
+##### **Models Training and Hyperparameter Tuning** {style="font-size: 12pt;"}
+
+::::::::::::::::::::: panel-tabset
+## GBM
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Gradient Boosting Machine (GBM) was trained using 5-fold cross-validation, repeated three times, on the training portion of the data `(repeatedcv, number = 5, repeats = 3)`. A grid search was performed over the number of trees `(n.trees)`, while other hyperparameters such as the shrinkage factor, depth of each tree, and minimum number of observations in the terminal nodes were kept constant to commonly accepted default. It is difficult to tune all parameters due to runtime constraints especially on our CPU supported machines. Therefore, the defined grid of the hyperparameter tuning includes:
+
+-   `n.trees`: \[100, 200, ..., 1000\]
+-   `interaction.depth`: 2 (fixed)
+-   `shrinkage`: 0.1 (fixed)
+-   `n.minobsinnode`: 10 (fixed)
+
+A total of 10 GBM models were fitted based on different values of the number of trees`n.trees = {100, 200, 300, 400, 500, 600, 700, 800, 900, 1000}`. Each model was evaluated using 5-fold cross-validation repeated 3 times, resulting in 15 resampling iterations. So, in total, 10 models × 15 iterations = 150 fits. Since we are dealing with an imbalanced multi-class classification problem where the \<30 class represents only 10% of the data. If only accuracy was used as the main evaluation measure to identify the best hyperparameter (number of trees), it would be dominated by the majority class "NO" and may overestimate the model performance. Therefore, GBM was trained using the Mean_F1 score as the primary evaluation metric to address class imbalance. The plot below illustrates how Mean F1 and Accuracy changed over the number of trees during hyperparameter tuning.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, results='hide', eval=FALSE}
+#| label: GMB
+set.seed(5003)
+
+#repeat split until no variable has only one unique value in train_data for better modelling in GBM as one unique value will cause split/contrast error
+repeat {
+  gbm_inTrain <- createDataPartition(diabetic_data$readmitted, p = 0.5, list = FALSE)
+  gbm_train_data <- diabetic_data[inTrain, ]
+  gbm_test_data  <- diabetic_data[-inTrain, ]
+
+  #checking if any column in train_data has only one unique value
+  gbm_unique_counts <- sapply(gbm_train_data, function(x) length(unique(x)))
+  gbm_one_level_vars <- names(gbm_unique_counts[gbm_unique_counts < 2])
+
+  if (length(gbm_one_level_vars) == 0) break  # Exit loop when all columns have ≥ 2 levels
+}
+
+#setup GBM train controls
+gbm_fit_control <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 3,
+  classProbs = TRUE,
+  summaryFunction = multiClassSummary,
+  verboseIter = TRUE
+)
+
+#setup GBM search grid
+gbm_grid <- expand.grid(
+  n.trees = seq(100, 1000, by = 100),
+  interaction.depth = 2,
+  shrinkage = 0.1,
+  n.minobsinnode = 10
+)
+
+#train GBM model
+gbm_model <- train(
+  readmitted ~ .,
+  data = gbm_train_data,
+  method = "gbm",
+  distribution = "multinomial",
+  metric = "Mean_F1",
+  tuneGrid = gbm_grid,
+  trControl = gbm_fit_control,
+  verbose = FALSE
+)
+```
+
+```{r, eval=FALSE}
+#plot metrics vs number of trees
+gbm_results_df <- gbm_model$results
+
+ggplot(gbm_results_df, aes(x = n.trees)) +
+  geom_line(aes(y = Mean_F1, color = "Mean F1"), linewidth = 1.2) +
+  geom_point(aes(y = Mean_F1, color = "Mean F1"), size = 2) +
+  geom_line(aes(y = Accuracy, color = "Accuracy"), linewidth = 1.2) +
+  geom_point(aes(y = Accuracy, color = "Accuracy"), size = 2) +
+  scale_color_manual(values = c(
+    "Mean F1" = "#440154",
+    "Accuracy" = "#21908C"
+  )) +
+  labs(
+    title = "Mean F1 and Accuracy vs Number of Trees",
+    x = "Number of Trees",
+    y = "Score",
+    color = "Metric"
+  ) +
+  scale_x_continuous(breaks = unique(gbm_results_df$n.trees)) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+  theme_minimal()
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The model performance, measured by Accuracy and Mean F1, remained almost unchanged despite increasing the number of trees from 100 to 1000, which reflects minimal improvement from additional boosting iterations for the current hyperparameter settings. Despite the fact that several different undocumented hyperparameter tuning settings were implemented but omitted due to page limitations, the result most of the time remained within the presented range, with slight variance. This reflects the complexity of the dataset where the model struggles to capture meaningful patterns. The best number of trees identified among the tuned values is 1000. Once the best hyperparameter selected the model was retrained on the entire training set and evaluated on the held-out test set.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, eval=FALSE}
+#final gbm model
+set.seed(5003)
+gbm_final_model <- gbm::gbm(
+  formula = readmitted ~ .,
+  data = gbm_train_data,
+  distribution = "multinomial",
+  n.trees = gbm_model$bestTune$n.trees,
+  interaction.depth = gbm_model$bestTune$interaction.depth,
+  shrinkage = gbm_model$bestTune$shrinkage,
+  n.minobsinnode = gbm_model$bestTune$n.minobsinnode,
+  verbose = FALSE
+)
+```
+:::
+
+## Decision Tree
+
+::: {style="text-align: justify; font-size: 10pt;"}
+A decision tree classifier `(rpart)` was trained using repeated 5-fold cross-validation (3 repeats) `(repeatedcv, number = 5, repeats = 3)` with a focus on handling class imbalance and optimizing multiclass sensitivity. Repeated cross-validation enabled the model to generalize better and avoid overfitting. Given the imbalance in the target variable readmitted, SMOTE (Synthetic Minority Over-sampling Technique) was usedduring training resamples `sampling = "smote"` to synthetically generate additional minority class (readmitted within 30 days) observation to balance the model training. Hyperparameter tuning included:
+
+-   Complexity Parameter (CP): `tuneLength` was set to 10 to automatically search over 10 candidate CP values, which controls how much the tree is pruned.
+-   Metric: Mean Sensitivity via `multiClassSummary`, as the data is imbalanced this will prioritize balanced recall across all classes rather than overall accuracy.
+
+In total, 50 decision trees were trained and evaluated across 10 different CP values and 5-fold cross-validation repeated 3 times. This ensured a thorough selection of the optimal model.The best-performing CP value was identified using `decision_tree_model$bestTune$cp` and used to train the final decision tree. For the Decision Tree model, hyperparameter tuning was performed using the complexity parameter (cp), which controls tree pruning to avoid overfitting. The optimal value selected was cp = 0.0071, as determined by cross-validation. This value reflects a balance between model complexity and generalization, enabling the tree to make meaningful splits without becoming overly tailored to the training data.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, results='hide'}
+#| label: decision tree
+#drop any rows with NA (caused by mismatched levels)
+dt_test_data <- test_data[complete.cases(test_data), ]
+
+set.seed(5003)
+#setup train control to repeated 5-fold cross-validation (3 repeats)
+dt_fit_control <- trainControl(
+  method = "repeatedcv",        
+  number = 5,
+  repeats = 3,
+  classProbs = TRUE,
+  summaryFunction = multiClassSummary,
+  savePredictions = "final",
+  verboseIter = TRUE,
+  sampling = "smote"
+)
+
+#train the decision tree module
+dt_model <- train(
+  readmitted ~ ., 
+  data = train_data,
+  method = "rpart",
+  trControl = dt_fit_control,
+  tuneLength = 10,
+  metric = "Mean_Sensitivity",
+)
+```
+
+```{r}
+#print the model
+ggplot(dt_model) +
+  geom_line(color = "#440154", linewidth = 0.5) +
+  geom_point(color = "#440154", size = 2) +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid.major = element_line(color = "gray80"),
+    panel.grid.minor = element_line(color = "gray90"),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12)
+  ) +
+  labs(
+    title = "Decision Tree Hyperparameter Tuning",
+    x = "Complexity Parameter (CP)",
+    y = "Mean Sensitivity"
+  )
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The best-performing CP value was cp = 0.0085, identified using `decision_tree_model$bestTune$cp`. This value resulted in the highest mean sensitivity and reflects a balance between model complexity and generalization, enabling the tree to make meaningful splits without fully remembering the training data. The best-performing CP value was used to train the final decision tree.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r,  results='hide'}
+#build a final decision tree model using the best parameter
+set.seed(5003)
+best_cp <- dt_model$bestTune$cp
+dt_final_model <- rpart(
+  readmitted ~ ., 
+  data = train_data, 
+  method = "class",
+  control = rpart.control(cp = best_cp)
+)
+```
+:::
+
+## SVM
+
+::: {style="text-align: justify; font-size: 10pt;"}
+A Support Vector Machine (SVM) classifier was trained using the `svmRadial` method from the caret package. The training process employed repeated cross-validation with the following specifications:
+
+-   Cross-validation: 5-fold CV, repeated 3 times.
+-   Metric: Accuracy via `multiClassSummary`
+-   Tuning Grid: `svm_grid <- expand.grid(C = c (0.1, 1, 10), sigma = c (0.01, 0.05, 0.1))`
+-   Training Time: Automatically recorded to assess model efficiency.
+
+The RBF kernel `(svmRadial)` was chosen because it can model nonlinear relationships without increasing the feature dimension. A smaller `sigma (0.01)` is selected to facilitate local influence and help capture subtle decision boundaries, but when combined with a smaller `C` value, it may lead to underfitting. The manual tuning grid enabled exploration of various combinations of the regularization parameter `C` and kernel width `sigma`. This helped identify the optimal balance between model flexibility and generalization. The optimal configuration selected was:
+
+-   Best Parameters: `C = 0.1, sigma = 0.01`
+-   Training Time: `~497 minutes`
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, results='hide', eval=FALSE}
+#| label: SVM
+#setup train control
+svm_fit_control <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 3,
+  classProbs = TRUE,
+  summaryFunction = multiClassSummary,
+  allowParallel = FALSE,
+  verboseIter = TRUE
+)
+
+#SVM grid
+svm_grid <- expand.grid(
+  C = c(0.1, 1, 10),
+  sigma = c(0.01, 0.1)
+  #sigma = c(0.01, 0.05, 0.1)
+)
+
+set.seed(5003)
+#train SVM model
+svm_model <- train(
+    readmitted ~ ., 
+    data = train_data,
+    method = "svmRadial",
+    trControl = svm_fit_control,
+    tuneGrid = svm_grid,
+    metric = "Accuracy",
+    verbose = FALSE
+    )
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Despite the substantial computational cost, the grid search allowed a thorough exploration of the SVM’s key hyperparameters, ultimately improving confidence in the selected configuration. SVM achieved a reasonable accuracy rate, but due to the grid search in the dense hyperparameter space and the high dimensionality of the data, the training process was extremely time-consuming (approximately 497 minutes). The best-performing model from the tuning process was retrained on the full training data and evaluated on the held-out test set.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, results='hide', eval=FALSE}
+#retrain best model
+set.seed(5003)
+svm_best_params <- svm_model$model$bestTune
+svm_final_model <- train(
+    readmitted ~ ., 
+    data = train_data,
+    method = "svmRadial",
+    trControl = svm_fit_control,
+    tuneGrid = svm_best_params,
+    verbose = FALSE
+  )
+```
+:::
+
+## Logistic Regression
+
+::: {style="text-align: justify; font-size: 10pt;"}
+In the model training phase for our multinomial logistic regression. First, we address class imbalance, we computed inverse‐frequency class weights with `1 / table(y)` and `class_weights[y + 1]`. so that underrepresented classes receive proportionally greater influence during fitting. We then passed `train_x` , `train_y`, and `sample_weights` directly into `cv.glmnet()` to perform weighted, 5‐fold cross‐validation over a sequence of regularization parameters `(λ)`. From the cross‐validation results:
+
+-   `λ_min = 0.003079934` is the value that minimizes the average deviance on the validation folds.
+-   `λ_1se = 0.008570099` is the more conservative choice obtained by moving one standard error above the minimum‐deviance `λ`.
+
+The corresponding cross‐validation errors:
+
+-   CV error at `λ_min = 2.135681`.
+-   CV error at `λ_1se = 2.141316`, a difference of only 0.005.
+
+This negligible increase in deviance indicates that tightening the regularization only minimally affects predictive performance while yielding a sparser, more interpretable model.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r,  results='hide'}
+#| label: logistic regression
+#remove target from the data for dummy encoding
+lr_train_features <- train_data %>% select(-readmitted)
+lr_test_features  <- test_data %>% select(-readmitted)
+
+#create dummy variables from predictors only
+lr_dummies <- dummyVars(~ ., data = lr_train_features)
+lr_train_x <- predict(lr_dummies, newdata = lr_train_features)
+lr_test_x  <- predict(lr_dummies, newdata = lr_test_features)
+
+#store target separately
+lr_train_y <- train_data$readmitted
+lr_test_y  <- test_data$readmitted
+
+#drop zero or near-zero variance predictors > to make the model runtime faster 
+lr_nzv <- nearZeroVar(lr_train_x)
+lr_train_x <- lr_train_x[, -lr_nzv]
+lr_test_x  <- lr_test_x[, -lr_nzv]
+
+#compute sample weights to address class imbalance
+class_w0 <- 1 / table(lr_train_y)
+sw0 <- class_w0[lr_train_y]
+set.seed(5003)
+
+#5-fold CV for multinomial glmnet with sample weights
+model_glmnet <- cv.glmnet(
+  x = lr_train_x,
+  y = lr_train_y,
+  family = "multinomial",
+  weights = sw0,
+  nfolds = 5,
+  type.multinomial = "ungrouped"
+)
+
+#optimal λ and corresponding CV errors
+lambda_min <- model_glmnet$lambda.min
+lambda_1se  <- model_glmnet$lambda.1se
+
+#compute log(λ) for plotting
+log_min     <- log(lambda_min)
+log_1se     <- log(lambda_1se)
+
+#expand margins to avoid clipping
+par(mar = c(5, 5, 4, 2) + 0.1)
+```
+
+```{r}
+#plot curve
+plot(model_glmnet,
+     main = "CV Deviance vs. log(λ)",
+     col = "#440154",               
+     xlab = "log(λ)",
+     ylab = "Mean CV Deviance",
+     cex.lab = 1.3,               
+     cex.axis = 1.1,              
+     cex.main = 1                 
+)
+
+#add dashed lines at λ_min and λ_1se
+abline(v = log_min, lty = 2, lwd = 1.2)
+abline(v = log_1se,  lty = 2, lwd = 1.2)
+
+#annotate λ_min and λ_1se values
+dev_min <- min(model_glmnet$cvm)
+text(log_min, dev_min + 0.01,
+     bquote(lambda[min] == .(round(lambda_min, 5))),
+     pos = 4, cex = 1.1)
+text(log_1se, dev_min + 0.01,
+     bquote(lambda[1~SE] == .(round(lambda_1se, 5))),
+     pos = 4, cex = 1.1)
+
+#reset margins
+par(mar = c(5, 4, 4, 2) + 0.1)
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Moreover, the cross‐validation curve (CV deviance versus log λ for the multinomial glmnet model, with dashed lines at λ_min and λ_1se) indicates `λ_min = 0.003079934` and `λ_1se = 0.008570099`. For the final model, `λ_1se` is adopted. Although `λ_min` achieves the lowest validation deviance and thus the highest predictive performance, `λ_1se` is preferred for two principal reasons. First, the increased regularization afforded by `λ_1se` yields a more parsimonious coefficient vector, thereby enhancing model stability and reducing overfitting. Second, the resulting sparsity significantly improves interpretability, facilitating clearer communication of feature importance to non‐technical stakeholders.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r,  results='hide'}
+#extract logistic regression best model
+best_alpha  <- 1
+best_lambda <- model_glmnet$lambda.1se
+
+#recalculate sample weights aligned with train_y factor levels
+class_weights  <- 1 / table(lr_train_y)
+sample_weights <- as.numeric(class_weights[lr_train_y])
+
+lr_fit_control <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 3,
+  classProbs = TRUE,
+  summaryFunction = multiClassSummary
+)
+
+set.seed(5003)
+lr_final_model <- train(
+  x = lr_train_x,
+  y = lr_train_y,
+  method = "glmnet",
+  trControl = lr_fit_control,
+  tuneGrid  = data.frame(alpha  = best_alpha,
+                         lambda = best_lambda),
+  weights = sample_weights
+)
+```
+:::
+
+## k-NN
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The k-NN model was trained using 5-fold cross-validation with 3 repeats to balance computational cost and evaluation stability. Training was executed in parallel using the `doParallel` package, significantly reducing runtime. Instead of relying on an automated `tuneLength`, a custom grid of `k` values was defined using: `tuneGrid = expand.grid(k = seq(3, 15, 2))`. This explicitly tested a range of odd `k` values to avoid tie votes. The optimal value of `k` was selected based on Mean F1 Score, a metric particularly suitable for multiclass and imbalanced data scenarios. The line chart of F1 Score vs. k showed indicates a clear performance peak at k = 3, followed by a gradual decline reinforcing the optimal hyperparameter selection.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r,  results='hide'}
+#| label: KNN
+#train control setup
+knn_fit_control <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 3,
+  classProbs = TRUE,
+  summaryFunction = multiClassSummary,
+  savePredictions = "final"
+)
+
+#remove target from the data for dummy encoding
+knn_train_features <- train_data %>% select(-readmitted)
+knn_test_features  <- test_data %>% select(-readmitted)
+
+#create dummy variables from predictors only
+knn_dummies <- dummyVars(~ ., data = knn_train_features)
+knn_train_x <- predict(knn_dummies, newdata = knn_train_features)
+knn_test_x  <- predict(knn_dummies, newdata = knn_test_features)
+
+#store target separately
+knn_train_y <- train_data$readmitted
+knn_test_y  <- test_data$readmitted
+
+# Drop zero or near-zero variance predictors > to make the model runtime faster as these columns will be dropped by caret::preProcess() automatically 
+knn_nzv <- nearZeroVar(knn_train_x)
+knn_train_x <- knn_train_x[, -knn_nzv]
+knn_test_x  <- knn_test_x[, -knn_nzv]
+
+#train KNN model
+set.seed(5003)
+knn_model <- train(
+  x = knn_train_x,
+  y = knn_train_y,
+  method = "knn",
+  trControl = knn_fit_control,
+  preProcess = c("center", "scale"),
+  tuneGrid = expand.grid(k = seq(3, 15, 2))
+)
+
+```
+
+```{r}
+ggplot(knn_model$results, aes(x = k, y = Mean_F1)) +
+  geom_line(color = "#440154") +  # color-blind friendly blue
+  geom_point(size = 2, color = "#440154") +
+  labs(
+    title = "Macro F1 Score vs Number of Neighbors (k)",
+    x = "k (Number of Neighbors)",
+    y = "Macro F1 Score"
+  ) +
+  theme_minimal(base_size = 12)
+
+#extract KNN model best k
+best_k <- knn_model$bestTune$k
+knn_final_model <- train(
+  x = knn_train_x,
+  y = knn_train_y,
+  method = "knn",
+  trControl = knn_fit_control,
+  preProcess = c("center", "scale"),
+  tuneGrid = data.frame(k = best_k)
+)
+```
+:::
+:::::::::::::::::::::
+
+##### **Models Evaluation & Comparison** {style="font-size: 12pt;"}
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#function to evluate model performance
+evaluate_model_metrics <- function(final_model, test_data, train_data, test_labels = NULL, train_labels = NULL, method = NULL) {
+  #set model method name
+  model_name <- if (!is.null(method)) method else final_model$method
+
+  #get true labels
+  y_true <- if (!is.null(test_labels)) {
+    factor(test_labels)
+  } else {
+    factor(test_data$readmitted, levels = levels(train_data$readmitted))
+  }
+
+  #predict class probabilities and convert to predicted class
+  pred_probs <- predict(final_model, newdata = test_data, type = "prob")
+  pred_class <- colnames(pred_probs)[apply(pred_probs, 1, which.max)]
+  y_pred <- factor(pred_class, levels = levels(y_true))
+
+  #confusion matrix
+  conf_mat <- confusionMatrix(y_pred, y_true)
+
+  #rounded accuracy
+  accuracy <- round(conf_mat$overall["Accuracy"], 4)
+
+  #per-class metrics
+  by_class <- conf_mat$byClass
+  class_labels <- rownames(by_class)
+  per_class_metrics <- lapply(seq_along(class_labels), function(i) {
+    list(
+      class = class_labels[i],
+      precision = round(by_class[i, "Precision"], 4),
+      recall = round(by_class[i, "Recall"], 4),
+      f1 = round(by_class[i, "F1"], 4)
+    )
+  })
+
+  #macro-averaged metrics (rounded)
+  macro_precision <- round(mean(by_class[, "Precision"], na.rm = TRUE), 4)
+  macro_recall    <- round(mean(by_class[, "Recall"], na.rm = TRUE), 4)
+  macro_f1        <- round(mean(by_class[, "F1"], na.rm = TRUE), 4)
+
+  return(list(
+    method = model_name,
+    accuracy = accuracy,
+    per_class = per_class_metrics,
+    macro_precision = macro_precision,
+    macro_recall = macro_recall,
+    macro_f1 = macro_f1
+  ))
+}
+
+#function to plot model Confusion Matrix
+plot_conf_matrix <- function(final_model, test_data, train_data, test_labels = NULL, train_labels = NULL, method = "Model") {
+  #handle case where true labels are passed separately (e.g., for dummy data)
+  y_true <- if (!is.null(test_labels)) {
+    factor(test_labels)
+  } else {
+    factor(test_data$readmitted, levels = levels(train_data$readmitted))
+  }
+
+  #predict class probabilities and get predicted class
+  pred_probs <- predict(final_model, newdata = test_data, type = "prob")
+  pred_class <- colnames(pred_probs)[apply(pred_probs, 1, which.max)]
+  y_pred <- factor(pred_class, levels = levels(y_true))
+
+  #compute confusion matrix
+  conf_mat <- confusionMatrix(y_pred, y_true)
+  cm_table <- as.data.frame(conf_mat$table)
+
+  #plot
+  p <- ggplot(cm_table, aes(x = Prediction, y = Reference, fill = Freq)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = Freq), color = "black", size = 2) +
+    scale_fill_gradient(low = "white", high = "#21908C") +
+    labs(
+      title = paste(method, "Confusion Matrix"),
+      x = "Predicted",
+      y = "Actual"
+    ) +
+    theme_minimal(base_size = 8) +
+    theme(
+      plot.title = element_text(size = 8, hjust = 0.5)
+      )
+
+  return(p)
+}
+
+#wrapper class
+predict.gbm_wrapper <- function(object, newdata, type = "prob") {
+  probs <- predict(object$model, newdata = newdata, n.trees = object$model$n.trees, type = "response")
+  probs_df <- as.data.frame(probs)
+  colnames(probs_df) <- object$classes
+  return(probs_df)
+}
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The best-performing model from the tuning process was retrained on the full training data and evaluated on the held-out test set. Evaluation covered both overall and class-specific performance. Below table provide a comprehensive assessment of best models’ performance (all classes average) against selected evaluation metrics.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#GBM model evaluation
+#create a wrapper object
+# gbm_final_wrapper <- list(
+#   model = gbm_final_model,
+#   classes = levels(gbm_train_data$readmitted),
+#   method = "GBM"
+# )
+# class(gbm_final_wrapper) <- "gbm_wrapper"
+# gbm_metrics <- evaluate_model_metrics(
+#   final_model = gbm_final_wrapper,
+#   test_data = gbm_test_data,
+#   train_data = gbm_train_data
+# )
+
+#Decision Tree model evaluation
+dt_metrics <- evaluate_model_metrics(dt_final_model, dt_test_data, train_data, method = "Decision Tree")
+
+#SVM model evaluation
+#svm_metrics <- evaluate_model_metrics(svm_final_model, test_data, train_data, method = "SVM")
+
+#KNN model evaluation
+knn_metrics <- evaluate_model_metrics(
+  final_model = knn_final_model,
+  test_data = knn_test_x,
+  train_data = knn_train_x,
+  test_labels = knn_test_y,
+  train_labels = knn_train_y,
+  method = "KNN"
+)
+
+#Logistic Regression model evaluation
+lr_metrics <- evaluate_model_metrics(
+  final_model = lr_final_model,
+  test_data = lr_test_x,
+  train_data = lr_train_x,
+  test_labels = lr_test_y,
+  train_labels = lr_train_y,
+  method = "Logistic Regression"
+)
+
+#convert result into summary
+# Convert results into summary with custom model order
+model_summary <- data.frame(
+  Model = c("GBM", "Decision Tree", "SVM", "KNN", "Logistic Regression"),
+  Accuracy = c(
+    "0.5876",
+    dt_metrics$accuracy,
+    "0.6016",
+    knn_metrics$accuracy,
+    lr_metrics$accuracy
+  ),
+  Macro_Precision = c(
+    "0.4267",
+    dt_metrics$macro_precision,
+    "0.7086",
+    knn_metrics$macro_precision,
+    lr_metrics$macro_precision
+  ),
+  Macro_Recall = c(
+    "0.3755",
+    dt_metrics$macro_recall,
+    "0.3707",
+    knn_metrics$macro_recall,
+    lr_metrics$macro_recall
+  ),
+  Macro_F1 = c(
+    "0.3531",
+    "0.3069",
+    "0.3339",
+    knn_metrics$macro_f1,
+    lr_metrics$macro_f1
+  )
+)
+
+#display result in table
+model_summary %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4))) %>%
+  kable("html", caption = "Comparison of All Model Performance Metrics") %>%
+  kable_styling(full_width = FALSE, position = "center", bootstrap_options = c("striped", "hover"))
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+**GBM** model achieved an overall testing **accuracy of 58.76%**. Considering the No Information Rate (NIR) of 58.18%, which corresponds to the accuracy for predicting only the majority class, it is evident that the model provides only minimal insights, and such accuracy is achieved by simply predicting the majority class. This minimal gain suggests that GBM has a limited predictive value in identifying patient readmissions. Similarly, the **Decision Tree** model achieved an **accuracy of 58.18%**, indicating similar performance to GBM. Even with SMOTE sampling, Decision Tree still fail short in predicting meaningful classification insights, suggesting it relied on majority-class predictions. **SVM** model resulted in a more promising performance, achieving an **accuracy of 60.16%**, exceeding both GBM and Decision Tree models performance. **k-NN** model achieved an overall testing accuracy of **55.97%**. Although k-NN accuracy indicate moderate performance in classifying patient readmission, it underperformed when compared to other models. Finally, the **Logistic Regression** model achieved the highest testing accuracy of **46,77%**, suggesting a relatively stronger ability to predicate diabetic patient readmissions among the evaluated models.
+
+In terms of **overall F1 Score**, which better reflects performance on imbalanced datasets by balancing precision and recall, all models had limited ability to generalize across all classes. **GBM** model achieved an **F1 score of 35.31%,** indicating limited predictive power and that the model always predicts the majority class. The **Decision Tree** model, even with SMOTE, had the **lowest F1 Score at 30.69%**, indicating Decision Tree was unable to effectively learn minority class patterns. **SVM** model achieved an **F1 score of 33.39%**, slightly lower than GBM, indicating that the model's predictive ability for rare outcomes is weak. **k-NN** model achieved an **F1 Score of 32.59%**, very similar to GBM, but with slightly weaker recall and precision. Finally, **Logistic Regression** achieved the highest **F1 Score of 36.72%**, indicating a slightly more balanced ability and better reliability among the other models. Overall, F1 scores confirm that while logistic regression looks promising, all models have limited generalization ability under severe class imbalance.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#GBM onfusion matrix
+gbm_df <- data.frame(
+  Prediction = rep(c("no", "less_30", "greater_30"), each = 3),
+  Actual = rep(c("greater_30", "less_30", "no"), times = 3),
+  Freq = c(
+    4767, 1397, 9981,  #no
+    33, 18, 35,        #less_30
+    1548, 455, 1417    #greater_30
+  )
+)
+gbm_plot <- ggplot(gbm_df, aes(x = Prediction, y =Actual, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), color = "black", size = 2) +
+  scale_fill_gradient(low = "white", high = "#21908C") +
+  labs(
+    title = "GBM Confusion Matrix",
+    x = "Predicted",
+    y = "Actual",
+    fill = "Freq"
+  ) +
+  theme_minimal(base_size = 8) +
+  theme(
+    plot.title = element_text(size = 8, hjust = 0.5)
+    )
+
+#decision tree onfusion matrix
+dt_plot <- plot_conf_matrix(dt_model, dt_test_data, train_data, method = "Decision Tree")
+
+#SVM confusion matrix
+#svm_plot <- plot_conf_matrix(svm_final_model, test_data, train_data, method = "SVM")
+
+svm_cm_df <- data.frame(
+  Prediction = rep(c("no", "less_30", "greater_30"), each = 3),
+  Reference = rep(c("greater_30", "less_30", "no"), times = 3),
+  Count = c(
+    10805, 5351, 1539,   #no
+    0, 0, 18,           #less_30
+    625, 997, 313      #greater_30
+  )
+)
+svm_plot <- ggplot(svm_cm_df, aes(x = Prediction, y = Reference, fill = Count)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Count), color = "black", size = 2) +
+  scale_fill_gradient(low = "white", high = "#21908C") +
+  labs(
+    title = "SVM Confusion Matrix",
+    x = "Prediction",
+    y = "Actual",
+    fill = "Count"
+  ) +
+  theme_minimal(base_size = 8) +
+  theme(
+    plot.title = element_text(size = 8, hjust = 0.5)
+    )
+
+#KNN onfusion matrix
+knn_plot <- plot_conf_matrix(
+  final_model = knn_final_model,
+  test_data = knn_test_x,
+  train_data = knn_train_x,
+  test_labels = knn_test_y,
+  train_labels = knn_train_y,
+  method = "KNN"
+)
+
+#logistic regression onfusion matrix
+lr_plot <- plot_conf_matrix(
+  final_model = lr_final_model,
+  test_data = lr_test_x,
+  train_data = lr_train_x,
+  test_labels = lr_test_y,
+  train_labels = lr_train_y,
+  method = "Logistic Regression"
+)
+
+# lr_cm_df <- data.frame(
+#   Prediction = rep(c("no", "greater_30", "less_30"), each = 3),
+#   Actual = rep(c("greater_30", "less_30", "no"), times = 3),
+#   Freq = c(
+#     836, 2960, 7133,    #no
+#     739, 2141, 2646,    #less_30
+#     295, 1247, 1654     #greater_30
+#   )
+# )
+# lr_plot <- ggplot(lr_cm_df, aes(x = Prediction, y = Actual, fill = Freq)) +
+#   geom_tile(color = "white") +
+#   geom_text(aes(label = Freq), color = "black", size = 2) +
+#   scale_fill_gradient(low = "white", high = "#21908C") +
+#   labs(
+#     title = "Logistic Regression Confusion Matrix",
+#     x = "Predicted",
+#     y = "Actual",
+#     fill = "Freq"
+#   ) +
+#   theme_minimal(base_size = 8)  +
+#   theme(
+#     plot.title = element_text(size = 8, hjust = 0.5)
+#     )
+
+grid.arrange(gbm_plot, dt_plot, svm_plot, knn_plot, lr_plot, ncol = 2)
+```
+:::
+
+##### **Further Models Evaluation** {style="font-size: 12pt;"}
+
+::::::::::::::::::::: panel-tabset
+## GBM
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The pie chart further reconfirms the initial analysis, where approximately 82.16% predictions were assigned to the majority class (no), while only 0.44% went to the critical minority class (less than 30 days). The remaining 17.40% were predicted as greater than 30 days. This emphasizes the model’s bias toward the majority class, which limits the model capability to identify patients at risk for early readmission (less than 30 days).
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#confusion matrix values 
+predicted_counts <- c(
+  greater_30 = 1548 + 455 + 417,
+  less_30    = 33 + 18 + 35,
+  no         = 4767 + 1397 + 9981
+)
+
+pie_df <- data.frame(
+  Class = names(predicted_counts),
+  Count = as.numeric(predicted_counts)
+) %>%
+  mutate(
+    Percent = round(Count / sum(Count) * 100, 1),
+    Label = paste0(Percent, "%")
+  )
+
+#plot with percentages
+ggplot(pie_df, aes(x = "", y = Count, fill = Class)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) +
+  geom_text(aes(label = Label), position = position_stack(vjust = 0.5), size = 3) +
+  labs(
+    title = "GBM Predicted Class Distribution",
+    fill = "Predicted Class"
+  ) +
+  theme_void(base_size = 10)
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Analyzing the respective F1 score for each class indicates significant performance inconsistency, as illustrated by the bar chart below. The no readmission class achieved the highest F1 score (0.724), followed by greater than 30 days readmission (0.317). However, performance declines sharply for the minority class less than 30 days readmission (0.018). This extremely low F1 score for the \<30 days class highlights almost no predictive capability for this group by the GBM model which means the model showed a critical limitation for practical clinical use. Furthermore, referring to the summary table provides further emphasis on the highlighted limitation. For example, the extremely low recall (0.0096) for (\<30 days) class, stresses the failure to identify this group. The macro-average metrics precision (0.4267), recall (0.3755), and F1 score (0.3531) reflect an overall performance of slightly better than random guessing (since we have three classes, random guessing would result in an expected accuracy of approximately 33%, though other metrics like precision, recall, and F1 score would likely be much lower, especially for minority classes).
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, eval=FALSE}
+#Per-Class F1 Score Bar Chart
+f1_df <- data.frame(
+  Class = rownames(gbm_by_class),
+  F1_Score = gbm_by_class[,"F1"]
+)
+
+ggplot(f1_df, aes(x = Class, y = F1_Score, fill = Class)) +
+  geom_col() +
+  geom_text(aes(label = round(F1_Score, 3)), vjust = -0.3) +
+  labs(
+    title = "Per-Class F1 Score",
+    x = "Class",
+    y = "F1 Score"
+  ) +
+  theme_minimal()
+```
+:::
+
+## Decision Tree
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The pie chart reveals that the decision tree model is heavily biased toward the majority class (no readmission). While it performs well in identifying non-readmitted cases, it struggles significantly with minority classes, correctly classifying only 207 of less_30 and 4321 of greater_30. Most misclassifications involve incorrectly labeling readmitted patients as not readmitted.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#confusion matrix values 
+predicted_counts <- c(
+  greater_30 = 1478 + 547 + 4321,
+  less_30    = 452 + 207 + 1211,
+  no         = 1679 + 473 + 9280
+)
+
+#convert to data frame
+pie_df <- data.frame(
+  Class = names(predicted_counts),
+  Count = as.numeric(predicted_counts)
+) %>%
+  mutate(
+    Percent = round(Count / sum(Count) * 100, 1),
+    Label = paste0(Percent, "%")
+  )
+
+#plot with percentages
+ggplot(pie_df, aes(x = "", y = Count, fill = Class)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) +
+  geom_text(aes(label = Label), position = position_stack(vjust = 0.5), size = 3) +
+  labs(
+    title = "Decision Tree Predicted Class Distribution",
+    fill = "Predicted Class"
+  ) +
+  theme_void(base_size = 10)
+
+```
+:::
+
+## SVM
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Pie charts were used to inspect the predicted label distributions, highlighting any class prediction bias or imbalance. The predicted class distribution shows that: 90.1% of all predictions were for the majority class (no), where only 0.1% were classified as less_30, despite its presence in the dataset. This highlights a severe prediction bias toward the dominant class, a well-documented challenge in imbalanced multiclass classification tasks.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#prediction Summary
+# svm_final_predictions <- predict(svm_final_model, newdata = test_data)
+# svm_prediction_results <- data.frame(Actual = test_data$readmitted, Predicted = svm_final_predictions)
+# 
+# svm_prediction_summary <- svm_prediction_results %>%
+#   count(Predicted) %>%
+#   mutate(Percent = round(100 * n / sum(n), 1))
+# 
+# ggplot(svm_prediction_summary, aes(x = "", y = Percent, fill = factor(Predicted, levels = levels(diabetic_data$readmitted)))) +
+#   geom_col(width = 1, color = "white") +
+#   coord_polar("y") +
+#   scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) +
+#   geom_text(aes(label = paste0(Percent, "%")), position = position_stack(vjust = 0.5)) +
+#   labs(title = "SVM Predicted Class Distribution", fill = "Class") +
+#   theme_void()
+
+#confusion matrix values 
+predicted_counts <- c(
+  greater_30 = 625 + 997 + 313,
+  less_30    = 0 + 0 + 18,
+  no         = 10805 + 5351 + 1539
+)
+
+pie_df <- data.frame(
+  Class = names(predicted_counts),
+  Count = as.numeric(predicted_counts)
+) %>%
+  mutate(
+    Percent = round(Count / sum(Count) * 100, 1),
+    Label = paste0(Percent, "%")
+  )
+
+#plot with percentages
+ggplot(pie_df, aes(x = "", y = Count, fill = Class)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) +
+  geom_text(aes(label = Label), position = position_stack(vjust = 0.5), size = 3) +
+  labs(
+    title = "SVM Predicted Class Distribution",
+    fill = "Predicted Class"
+  ) +
+  theme_void(base_size = 10)
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Additionally, ROC curves were generated in a one-vs-rest manner for each target class, allowing analysis of the model’s discriminatory capacity. Below are the key interpretation for each class: no: AUC curve performs better than random, showing strong separability. greater_30: The curve is modest, suggesting limited discriminatory power. less_30: The ROC curve is very close to the diagonal, indicating near-random performance for this class.
+
+![](SVM ROC.png)
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, results='hide', eval=FALSE}
+#ROC Curves
+svm_test_probs <- predict(svm_final_model, newdata = test_data, type = "prob")
+svm_true_labels <- test_data$readmitted
+svm_roc_data <- data.frame()
+
+for (class in colnames(svm_test_probs)) {
+  y_true <- ifelse(svm_true_labels == class, 1, 0)
+  if (length(unique(y_true)) == 2) {
+    roc_obj <- roc(response = y_true, predictor = svm_test_probs[[class]])
+    roc_df <- data.frame(
+      fpr = 1 - roc_obj$specificities,
+      tpr = roc_obj$sensitivities,
+      class = class
+    )
+    svm_roc_data <- rbind(svm_roc_data, roc_df)
+  }
+}
+
+svm_roc_data$class <- factor(svm_roc_data$class, levels = colnames(svm_test_probs))
+svm_display_labels <- c("less_30" = "<30", "greater_30" = ">30", "no" = "NO")
+
+ggplot(svm_roc_data, aes(x = fpr, y = tpr, color = class)) +
+  geom_line(linewidth = 1.2) +
+  geom_abline(linetype = "dashed", color = "gray60") +
+  scale_color_viridis_d(option = "D", begin = 0.1, end = 0.9,
+                        name = "Class", labels = svm_display_labels) +
+  facet_wrap(~ class, ncol = 3, labeller = as_labeller(svm_display_labels)) +
+  labs(
+    title = "Faceted ROC Curves (One-vs-All)",
+    subtitle = "Dotted line represents random classifier (AUC = 0.5)",
+    x = "False Positive Rate",
+    y = "True Positive Rate"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+
+```
+:::
+
+## Logistic Regression
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The Per‐Class F1 bar chart highlights the performance disparity across the three categories. We observe that the model is heavily biased toward predicting "No readmit", as evidenced by its substantially higher F1 score relative to the other two classes. With F1 ≈ 0.20 for "\<30 days" and F1 ≈ 0.28 for "\>30 days", the model clearly fails to accurately and comprehensively identify patients at risk of early or delayed readmission. This visualization thus underscores the model’s poor performance on the minority classes and its inability to address the underlying class imbalance.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#predict classes and probabilities
+pred_lr <- predict(lr_final_model, newdata = lr_test_x)             # class predictions
+prob_lr <- predict(lr_final_model, newdata = lr_test_x, type = "prob")  # probability predictions
+
+#compute Precision, Recall, F1 for each class
+library(MLmetrics)
+
+f1_less30     <- F1_Score(y_pred = pred_lr, y_true = lr_test_y, positive = "less_30")
+f1_greater30  <- F1_Score(y_pred = pred_lr, y_true = lr_test_y, positive = "greater_30")
+f1_no         <- F1_Score(y_pred = pred_lr, y_true = lr_test_y, positive = "no")
+macro_f1      <- mean(c(f1_less30, f1_greater30, f1_no))
+
+precision_less30 <- Precision(y_pred = pred_lr, y_true = lr_test_y, positive = "less_30")
+recall_less30    <- Recall(y_pred = pred_lr, y_true = lr_test_y, positive = "less_30")
+
+precision_greater30 <- Precision(y_pred = pred_lr, y_true = lr_test_y, positive = "greater_30")
+recall_greater30    <- Recall(y_pred = pred_lr, y_true = lr_test_y, positive = "greater_30")
+
+precision_no    <- Precision(y_pred = pred_lr, y_true = lr_test_y, positive = "no")
+recall_no       <- Recall(y_pred = pred_lr, y_true = lr_test_y, positive = "no")
+
+#prepare data frame for F1 scores
+f1_plot <- tibble(
+  Class    = c("less_30", "greater_30", "no"),
+  F1_Score = c(f1_less30, f1_greater30, f1_no)
+)
+
+#plot F1 scores by class
+ggplot(f1_plot, aes(x = Class, y = F1_Score, fill = Class)) +
+  geom_col(width = 0.6) +
+  scale_fill_viridis_d() +
+  labs(
+    title = "Logistic Regression Per-Class F1 Score",
+    x     = "Class",
+    y     = "F1 Score"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x     = element_text(angle = 0, hjust = 0.5)
+  )
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+One‐versus‐all ROC curves for each readmission category, treating the target class as "positive" and the other two classes as "negative". The area under the curve (AUC) quantifies the model's ability to discriminate the focal class from the rest, with 0.5 indicating random performance and 1.0 indicating perfect separation. All three AUC values are low (all below 0.63), demonstrating that the model's probability outputs provide only limited discriminatory signal for any single outcome. The minority classes perform worst“\>30 days” achieves an AUC of approximately 0.586 and "\<30 days" an AUC of approximately 0.601. This result further confirming the model's poor sensitivity and specificity for readmission cases. Although the majority "No readmit" class attains a slightly higher AUC (\~0.621), this is still insufficient for robust discrimination and aligns with its relatively higher F1 score. The ROC analysis indicates that, even at optimal thresholds, the current model cannot reliably distinguish readmission events.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#set up plotting area for 3 panels
+par(mfrow = c(1, 3))
+
+for (cls in c("less_30", "greater_30", "no")) {
+  # Create binary labels: current class = positive, others = negative
+  y_bin <- ifelse(lr_test_y == cls, 1, 0)
+  # Extract the predicted probabilities for this class
+  scores <- prob_lr[[cls]]
+  # Compute ROC curve and AUC
+  roc_obj <- roc(response = y_bin, predictor = scores)
+  auc_val <- auc(roc_obj)
+  # Plot ROC and display AUC in the title
+  plot(roc_obj, main = sprintf("%s ROC\nAUC = %.3f", cls, auc_val))
+}
+
+#reset to single plot
+par(mfrow = c(1, 1))
+```
+:::
+
+## KNN
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The pie chart further illustrates this imbalance, showing that the vast majority of predictions fall under the no class, with very few assigned to greater_30 and especially less_30, reinforcing the model’s strong bias toward the dominant class. This distribution mirrored the original class imbalance in the dataset, indicating that the model was consistent with the underlying data and had improved in capturing minority classes.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#predict class labels
+knn_final_predictions <- predict(knn_final_model, newdata = knn_test_x)
+
+#create actual vs predicted dataframe
+knn_prediction_results <- data.frame(
+  Actual = knn_test_y,
+  Predicted = knn_final_predictions
+)
+
+#calculate predicted class proportions
+knn_prediction_summary <- knn_prediction_results %>%
+  count(Predicted) %>%
+  mutate(Percent = round(100 * n / sum(n), 1))
+
+#pie chart
+ggplot(knn_prediction_summary, aes(x = "", y = Percent, fill = Predicted)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar("y") +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) +
+  geom_text(aes(label = paste0(Percent, "%")), position = position_stack(vjust = 0.5)) +
+  labs(
+    title = "k-NN Predicted Class Distribution",
+    fill = "Predicted Class"
+  ) +
+  theme_void(base_size = 10)
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The faceted ROC curves reveal that the model's ability to distinguish between classes is weak overall. The \<30 class performs the worst, with its curve nearly overlapping the random baseline (AUC = 0.5), indicating almost no true predictive separation. The \>30 and NO classes show slightly better curves with modest upward deviation from the diagonal, but their shapes are very similar, reflecting limited but comparable discriminatory power. These curves confirm that the model struggles most with the minority class \<30, while its performance on the other two classes remains only marginally better than random guessing.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#get predicted probabilities
+knn_test_probs <- predict(knn_final_model, newdata = knn_test_x, type = "prob")
+
+#internal labels from knn_test_probs
+internal_classes <- colnames(knn_test_probs)  # e.g., "lt30", "gt30", "no"
+
+#preserve original factor test_y (DO NOT re-factor here)
+display_labels <- c("lt30" = "<30", "gt30" = ">30", "no" = "NO")
+
+#initialize empty data frame to store ROC results
+knn_roc_data <- data.frame()
+
+# Loop over each class to compute ROC
+for (class in internal_classes) {
+  true_binary <- ifelse(knn_test_y == class, 1, 0)
+  
+  # Only compute ROC if both classes are present
+  if (length(unique(true_binary)) == 2) {
+    roc_obj <- roc(response = true_binary, predictor = knn_test_probs[[class]])
+    roc_df <- data.frame(
+      fpr = 1 - roc_obj$specificities,
+      tpr = roc_obj$sensitivities,
+      class = class
+    )
+    knn_roc_data <- rbind(knn_roc_data, roc_df)
+  }
+}
+
+#factor class for consistent order in plot
+knn_roc_data$class <- factor(knn_roc_data$class, levels = internal_classes)
+
+# Plot ROC with facets, color-blind palette, and clean labels
+ggplot(knn_roc_data, aes(x = fpr, y = tpr, color = class)) +
+  geom_line(linewidth = 1.2) +
+  geom_abline(linetype = "dashed", color = "gray60") +
+  scale_color_viridis_d(
+    option = "D", begin = 0.1, end = 0.8,
+    name = "Class", labels = display_labels
+  ) +
+  facet_wrap(~ class, ncol = 3, labeller = as_labeller(display_labels)) +
+  labs(
+    title = "Faceted ROC Curves (One-vs-All)",
+    subtitle = "Dotted line represents random classifier (AUC = 0.5)",
+    x = "False Positive Rate (1 - Specificity)",
+    y = "True Positive Rate (Sensitivity)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+```
+:::
+:::::::::::::::::::::
+
+### 6. Interpretations & Insights {style="font-size: 14pt;"}
+
+::: {style="text-align: justify; font-size: 10pt;"}
+All evaluated models (GBM, Decision Tree, SVM, k-NN, Logistic Regression) showed limited ability in predicting diabetic patient readmission status within 30 days of discharge (minority class). Despite careful preprocessing, standardized scaling, and stratified splitting, all models consistently favored the majority class (no readmission) and failed to meaningfully recognize the two minority classes (less_30 and greater_30). This finding point not to process failure, but to underlying data limitations and possibly a lack of strong pattrents within diabetic patient readmission.
+
+The GBM model, despite being known for handling complex patterns, achived a poor F1 Score of 35.31%. Based on our analysis, it seems that the GBM model is inadequate for handling extreme class imbalance unless extensive preprocessing techniques are applied to refine and enhance the class imbalance issue of the dataset. The model shows a strong tendency to predict the majority class, which limits its effectiveness in clinical applications. As a result, it frequently fails to identify patients in the \<30 days readmission group. This imbalance reduces the model ability to provide meaningful insights across all classes The overall accuracy shows only a slight improvement compared to random guessing, which means the model is not reliable enough for real world application.
+
+The Decision Tree model, despite its simplicity and interpretability, demonstrated the weakest overall performance across all evaluated classifiers, achieving the lowest F1 Score of 30.69%. Even with SMOTE sampling to handle class imbalance during training, the model showed poor generalization and tendency towards the majority class (no readmission). While the model provides interpretable decision logic, which can be valuable in clinical settings, its inherent limitation failed to identify complex patterns needed to distinguish readmission status. In this task, where readmission may depend on complex pattrent between multiple patient features, decision trees failed to capture rare minority class.
+
+The SVM model performs well in predicting the majority class "no", but its generalization ability for the minority classes, especially "less_30", is poor. Although the macro precision seems good, the F1 score of 33.39% indicates that the model's predictive ability for rare outcomes is weak. These deficiencies mainly stem from class imbalance, which affects model training and evaluation. While the SVM was a reasonable choice for this task, its inability to handle rare class prediction underlines the need for additional data handling strategies beyond kernel tuning.
+
+The performance of the k-NN model was also significantly limited by the characteristics of the underlying dataset. The Macro F1 Score of 32.59% is inflated by strong performance on the dominant class. Additionally, the ROC curves for all three classes are nearly indistinguishable from random guessing, with AUC values close to 0.5. These weaknesses are not primarily due to the modeling technique itself, but rather to the inherent imbalance and possible feature overlap in the underlying dataset, which poses a challenge for any classifier. The vast majority of observations belong to the no class, giving the model little opportunity to learn meaningful patterns for the others. In its current form, the model fails to provide reliable predictions across all classes and highlights the need for dataset-specific interventions.
+
+The Logistic Regression model was the most balanced among all models, achieving the highest F1 Score of 36.72%. Although the Logistic Regression model demonstrates efficiency, interpretability, and imbalance correction via sample weighting, its linear assumptions and sensitivity to hyperparameter choice restrict its ability to capture complex nonlinear patterns. The extensive overlap in predicted probability distributions further indicates that no single threshold can reliably distinguish all three readmission outcomes.
+
+To improve the detection of early diabetic patient readmissions within 30 days of discharge (minority class), future work should prioritize data focused improvements over model complexity. Key strategies include adaptive resampling techniques such as SMOTE or ensemble-based oversampling, which can boost minority class representation and mitigate the imbalance observed in all current models. Additionally, cost-sensitive learning such as incorporating class weights or penalized loss functions should be applied, especially in algorithms like SVM, to discourage majority-class bias. Beyond resampling, exploring richer feature representations (e.g., interaction terms or nonlinear transformations) could help explore hidden patterns overlooked by linear models. Ensemble approaches such as Random Forests, XGradient-Boosted Machines (e.g., XGBoost), or stacked models should also be investigated for their ability to capture complex, nonlinear relationships while maintaining generalizability. These combined strategies aim to enhance recall and F1 scores for underrepresented classes, enabling more reliable prediction approch in clinical settings where early readmissions detection is critical.
+:::
+
+### 7. References {style="font-size: 14pt;"}

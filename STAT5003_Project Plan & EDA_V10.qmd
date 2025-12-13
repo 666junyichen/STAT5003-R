@@ -1,0 +1,952 @@
+---
+title: "STAT5003: Project Plan and EDA"
+subtitle: "Workshop 11 Group 01"
+date: "13 April 2025"
+author:
+  - name: "jche0758"
+    affiliation: "SID: 520110054"
+  - name: "lals0119"
+    affiliation: "SID: 540615841"
+  - name: "nals0930"
+    affiliation: "SID: 540927401"
+  - name: "nkha0389"
+    affiliation: "SID: 540829493"
+  - name: "yaff0377"
+    affiliation: "SID: "
+format:
+  html:
+    code-fold: true
+    code-tools: true
+    self-contained: true
+editor: visual
+toc: true
+bibliography: references.bib
+---
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+#load libraries
+library(tidyverse)  #for data science, loads other core libraries
+library(kableExtra) #for table styling
+library(scales)     #for scaling axes
+library(reshape2)   #for reshaping data
+library(fmsb)       #for radar/spider charts
+library(patchwork)  #for combining ggplots
+library(plotly)     #for interactive ggplots
+```
+
+```{r}
+#load the dataset
+diabetic_data <- read_csv("diabetic_data.csv", show_col_types = FALSE)
+```
+
+</details>
+:::
+
+## 1. Problem Definition
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Hospital readmissions are a critical healthcare problem due to the significant impact they have on patient's health, healthcare costs, and the overall efficiency of the healthcare system. Hospital readmissions, primarily those occurring within 30 days of discharge, are a key indicator of the healthcare quality provided to patients with chronic conditions like diabetes. Predicting diabetic patient readmissions is significant for improving the overall healthcare quality and implementing proper post-discharge support and intervention plans, ultimately improving patient's long-term health and reducing unnecessary healthcare costs [@sharma2019].
+
+The classification task this project aims to tackle is **to predict diabetic patient readmission status within 30 days of discharge**, using data collected from 130 United States (US) hospitals between 1999 and 2008. The dataset consists of various attributes on patient demographics, medical and hospitalization records, and treatment procedures, providing details on the factors contributing to patient readmission status [@strack2014a]. This is a multi-class classification task, where the target variable readmitted $y$ has three distinct classes.
+
+$$
+y = \begin{cases} 
+<30 & \text{(patient was readmitted within 30 days)} \\
+>30 & \text{(patient was readmitted after 30 days)} \\
+\text{No} & \text{(patient was not readmitted)} 
+\end{cases}
+$$
+
+Developing a classification model to predict diabetic patient readmission status will contribute to improving healthcare quality, improving patient health and long-term health outcomes, avoiding unnecessary readmission costs, supporting clinical decision-making, and improving hospital's operational efficiency [@vrrejiraj2023].
+:::
+
+## 2. Data Description
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The dataset used in this assignment titled "Diabetes 130-US Hospitals for Years 1999-2008" was obtained from the Health Facts database, a national warehouse that collects comprehensive clinical records from hospitals across the US, and was later made publicly available at the UCI Machine Learning Repository [@strack2014a]. The raw dataset contains **101,767 records** and **50 attributes**, collected from **130 hospitals** between 1999 and 2008. It includes **categorical features** representing patient and hospital outcomes, such as race, gender, medical specialty, diagnoses, payer code, and **23 medication-related features** (e.g., metformin, insulin, etc.). In addition, there are **numerical attributes** such as encounter ID and patient number, admission type and number of lab procedures.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Data Dictionary</summary>
+
+```{r}
+#create table for dataset features name and type
+datatype_tbl <- tibble(
+  Variable = names(diabetic_data),
+  Type = sapply(diabetic_data, class)
+)
+
+#split into variable-type pairs
+pairs <- datatype_tbl %>%
+  mutate(Pair = map2(Variable, Type, ~c(.x, .y))) %>%
+  pull(Pair) %>%
+  unlist()
+
+#set a table of 6 columns for better display
+num_cols <- 6 
+rows_needed <- ceiling(length(pairs) / num_cols)
+length(pairs) <- rows_needed * num_cols 
+
+#set column names and conver to matrix
+col_names <- rep(c("Variable", "Type"), num_cols / 2)
+pair_matrix <- matrix(pairs, ncol = num_cols, byrow = TRUE)
+
+#display table using kable
+kable(pair_matrix, col.names = col_names, escape = FALSE) %>%
+  kable_styling(full_width = FALSE)
+```
+
+</details>
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The Diabetes 130-US Hospitals for Years 1999-2008 dataset is very challenging, as it meets **all** the *Dataset Selection Guidelines* stated in the project requirements. These aspects highlight the dataset's complexity and suitability for evaluating real-world clinical scenarios using computational statistical models.
+
+-   **Large Size**: The size of the dataset is large, as it contains over **100,000 records**.
+-   **Messy**: The dataset is considered messy, with more than **192,000 missing values** identified across all features, as will be shown in the *Data Cleaning and Preparation* section.
+-   **Complex**: The dataset is also considered complex, as it contains a **mix of categorical and numerical attributes** (as shown in the previous table), and it represents complex relationships between multiple health factors and treatment patterns.
+-   **Integration**: The data was integrated from different data sources that included **130 hospitals** spanning the years **1999 to 2008**.
+-   **Multi-class**: The dataset involves a **multi-class classification task** based on the readmitted attribute (\<30 if the patient was readmitted in less than 30 days, \>30 if readmitted after 30 days, and No if the patient was not readmitted).
+:::
+
+## 3. Clean and Prepare
+
+##### **Load, Understand, and Categorize Data**
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+#get dimensions of the dataset
+dim(diabetic_data)
+
+#display structure of the dataset
+str(diabetic_data)
+
+#dummary statistics for each column
+summary(diabetic_data)
+```
+
+</details>
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The dataset named "diabetic_data.csv" was loaded using `read_csv()` with `show_col_types = FALSE` to suppress the warning message that appears when column data types are automatically inferred. To explore and examine the dataset, `str()` function was used to examine the structure of the dataset, whereas `summary()` function was used to roviding key descriptive statistics such as minimum, median, mean, and maximum values. From the functions output it was observed that most of the diabetes dataset features fall into two main types:
+
+-   **Numeric:** These include hospitalization duration, lab test results, procedures, medications, and patient counts (e.g., time_in_hospital, num_lab_procedures,\`\`num_procedures, num_medications).
+-   **Character:** These include categorical attributes such as race, gender, age, diagnosis codes (diag_1, diag_2, diag_3), and medication-related features like metformin, insulin, and others.
+:::
+
+##### **Identify and Handle Missing Values**
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Once a general understanding was gained on the dataset, the dataset was examined for missing and null values. The dataset was first scanned for standard NA entries using `is.na()` function. However, this check returned zero missing values, indicating that missing data might have been recorded in alternative forms.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+
+#check for actual NA values in each column
+na_counts <- colSums(is.na(diabetic_data))
+
+#convert to a data frame
+na_summary <- enframe(na_counts, name = "Column", value = "NA_Count")
+
+#display table using kable
+kable(na_summary, caption = "Standard Missing Values (NA) per Column") %>%
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+</details>
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Upon further inspection of the dataset, it was found that missing values were represented in various non-standard forms such as "?" and "Unknown/Invalid". These are often used to indicate missing or uncertain information. To systematically identify such entries, a loop was implemented to scan each column and count the occurrences of these values.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+#create empty vectors to store results
+column_names <- c()
+question_marks <- c()
+empty_strings <- c()
+unknowns <- c()
+unknown_invalids <- c()
+
+#loop through each column
+for (i in 1:ncol(diabetic_data)) {
+  col_name <- colnames(diabetic_data)[i]
+  col_data <- diabetic_data[[i]] 
+
+  #count each missing type
+  qmark <- sum(col_data == "?", na.rm = TRUE)
+  empty <- sum(col_data == "", na.rm = TRUE)
+  unk <- sum(col_data == "Unknown", na.rm = TRUE)
+  unk_inv <- sum(col_data == "Unknown/Invalid", na.rm = TRUE)
+
+  #only record if at least one missing-like value exists
+  if (qmark + empty + unk + unk_inv > 0) {
+    column_names <- c(column_names, col_name)
+    question_marks <- c(question_marks, qmark)
+    empty_strings <- c(empty_strings, empty)
+    unknowns <- c(unknowns, unk)
+    unknown_invalids <- c(unknown_invalids, unk_inv)
+  }
+}
+
+#combine all into one data frame (after the loop)
+missing_summary <- data.frame(
+  Column = column_names,
+  Question_Mark = question_marks,
+  Empty_String = empty_strings,
+  Unknown = unknowns,
+  Unknown_Invalid = unknown_invalids
+)
+```
+
+```{r}
+#display table using kable
+kable(missing_summary, align = "lcccc", caption = "Summary of Missing Values") %>%
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+</details>
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+After conducting a second-level inspection for missing values, eight features were identified with non-standard missing entries. These were primarily represented by question marks "?" and a few "Unknown/Invalid" values. The figure below displays the missing values distribution, all these missing values were replaced with NA for uniformity.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r}
+#prepare data for ggplot
+missing_long <- missing_summary %>%
+  pivot_longer(
+    cols = c(Question_Mark, Empty_String, Unknown, Unknown_Invalid),
+    names_to = "Type",
+    values_to = "Count"
+  )
+
+#plot missing value count
+p <- ggplot(missing_long, aes(x = reorder(Column, -Count), y = Count, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Summary of Missing Values Counts",
+    x = "Feature",
+    y = "Missing Count",
+    fill = "Missing Type"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 40, hjust = 1),
+    plot.title = element_text(face = "bold", size = 10, hjust = 0.5))
+
+#make plot interactive
+ggplotly(p, width = 600, height = 400)
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+#replace "?" with NA
+diabetic_data[diabetic_data == "?"] <- NA
+
+#replace "Unknown/Invalid" with NA
+diabetic_data[diabetic_data == "Unknown/Invalid"] <- NA
+```
+
+</details>
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The following features were removed for the dataset as each of these features has more than **40% missing values.** Additionally, these features are not not essential for building a reliable predictive model nor impact the classification task to predict diabetic patient readmission status within 30 days of discharge.
+
+-   **weight** represents the patient's body weight. More than 97% of weight values are missing. Due to its lack of completeness, it is not practical to include this feature.
+-   **payer_code** refers to the patient's method of payment or insurance with approximately 40% missing data. This feature is more administrative than predictive and has minimal relevance to the classification goal.
+-   **medical_specialty** indicates the specialty of the admitting physician, with nearly 50% of missing values. Additionally, this feature contains a large number of inconsistent and sparse categories, which will not be beneficial during model building and training.
+
+Since the dataset is already large and only a reletvily small number of observations had missing values in important features like race, gender, and diagnosis codes, it was decided to remove those observations reduceding the dataset from 101,766 to 98,052 observations, keeping only complete records for analysis. Additionally, the features encounter_id (a unique ID for each hospital visit) and patient_nbr (a unique ID for each patient) were removed since these two features do not provide any useful information for predicting diabetic patient readmission status.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+#remove the weight, payer_code, medical_specialty  column
+diabetic_data <- diabetic_data %>% select(-c(weight, payer_code, medical_specialty))
+
+dim(diabetic_data)
+```
+
+```{r}
+#remove rows that contain any NA values
+diabetic_data <- na.omit(diabetic_data)
+dim(diabetic_data)
+```
+
+```{r}
+#remove the encounter ID and patient number columns
+diabetic_data <- diabetic_data %>% select(-c(encounter_id, patient_nbr ))
+dim(diabetic_data)
+```
+
+</details>
+:::
+
+##### **Features Engineering for Categorical Features**
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The number of unique values in each column are counted to identify features with high cardinality. Most medication-related features had only 2–4 unique values, making them straightforward to include in the model. However, the diagnosis features (i.e., diag_1 = 713, diag_2 = 740, and diag_3 = 786) contained hundreds of unique ICD-9 codes, the official system of assigning codes to diagnoses and procedures associated with hospital utilization in the United States [@strack2014a]. Thus, using them directly would be complex and may lead to overfitting.
+
+The diagnosis features record the patient's primary and secondary conditions using ICD-9 codes. As these codes are highly granular and not human-readable, they were **mapped** into broader disease groups based on their **first three digits**, following guidelines from the reference documentation [@strack2014a]. This preserves the medical meaning while reducing the number of categories. For example, codes between 390–459 and 785 were mapped to "Circulatory", while codes from 460–519 and 786 were grouped under "Respiratory", and so on. Some codes such as "V45" or "E884" did not fall into any of the defined ICD-9 groupings. Rather than removing them immediately, they were assigned the group "Unknown" to preserve them for further review.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+for (col_name in colnames(diabetic_data)) {
+  print(col_name)
+  print(length(unique(diabetic_data[[col_name]])))
+}
+```
+
+```{r}
+# === diag_1 ===
+diabetic_data$diag_1_prefix <- substr(diabetic_data$diag_1, 1, 3)
+diabetic_data$diag_1_num <- as.numeric(diabetic_data$diag_1_prefix)
+
+diabetic_data$diag_1_group <- NA
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 390 & diabetic_data$diag_1_num <= 459 | diabetic_data$diag_1_num == 785] <- "Circulatory"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 460 & diabetic_data$diag_1_num <= 519 | diabetic_data$diag_1_num == 786] <- "Respiratory"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 520 & diabetic_data$diag_1_num <= 579 | diabetic_data$diag_1_num == 787] <- "Digestive"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 250 & diabetic_data$diag_1_num < 251] <- "Diabetes"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 800 & diabetic_data$diag_1_num <= 999] <- "Injury"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 710 & diabetic_data$diag_1_num <= 739] <- "Musculoskeletal"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 580 & diabetic_data$diag_1_num <= 629 | diabetic_data$diag_1_num == 788] <- "Genitourinary"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 140 & diabetic_data$diag_1_num <= 239] <- "Neoplasms"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 1 & diabetic_data$diag_1_num <= 139] <- "Infectious"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num >= 290 & diabetic_data$diag_1_num <= 319] <- "Mental Disorders"
+diabetic_data$diag_1_group[diabetic_data$diag_1_num %in% c(780, 781, 784) | (diabetic_data$diag_1_num >= 790 & diabetic_data$diag_1_num <= 799)] <- "Other"
+diabetic_data$diag_1_group[is.na(diabetic_data$diag_1_group)] <- "Unknown"  #mark any unmatched code as unknown
+
+# === diag_2 ===
+diabetic_data$diag_2_prefix <- substr(diabetic_data$diag_2, 1, 3)
+diabetic_data$diag_2_num <- as.numeric(diabetic_data$diag_2_prefix)
+
+diabetic_data$diag_2_group <- NA
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 390 & diabetic_data$diag_2_num <= 459 | diabetic_data$diag_2_num == 785] <- "Circulatory"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 460 & diabetic_data$diag_2_num <= 519 | diabetic_data$diag_2_num == 786] <- "Respiratory"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 520 & diabetic_data$diag_2_num <= 579 | diabetic_data$diag_2_num == 787] <- "Digestive"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 250 & diabetic_data$diag_2_num < 251] <- "Diabetes"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 800 & diabetic_data$diag_2_num <= 999] <- "Injury"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 710 & diabetic_data$diag_2_num <= 739] <- "Musculoskeletal"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 580 & diabetic_data$diag_2_num <= 629 | diabetic_data$diag_2_num == 788] <- "Genitourinary"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 140 & diabetic_data$diag_2_num <= 239] <- "Neoplasms"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 1 & diabetic_data$diag_2_num <= 139] <- "Infectious"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num >= 290 & diabetic_data$diag_2_num <= 319] <- "Mental Disorders"
+diabetic_data$diag_2_group[diabetic_data$diag_2_num %in% c(780, 781, 784) | (diabetic_data$diag_2_num >= 790 & diabetic_data$diag_2_num <= 799)] <- "Other"
+diabetic_data$diag_2_group[is.na(diabetic_data$diag_2_group)] <- "Unknown"
+
+# === diag_3 ===
+diabetic_data$diag_3_prefix <- substr(diabetic_data$diag_3, 1, 3)
+diabetic_data$diag_3_num <- as.numeric(diabetic_data$diag_3_prefix)
+
+diabetic_data$diag_3_group <- NA
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 390 & diabetic_data$diag_3_num <= 459 | diabetic_data$diag_3_num == 785] <- "Circulatory"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 460 & diabetic_data$diag_3_num <= 519 | diabetic_data$diag_3_num == 786] <- "Respiratory"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 520 & diabetic_data$diag_3_num <= 579 | diabetic_data$diag_3_num == 787] <- "Digestive"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 250 & diabetic_data$diag_3_num < 251] <- "Diabetes"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 800 & diabetic_data$diag_3_num <= 999] <- "Injury"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 710 & diabetic_data$diag_3_num <= 739] <- "Musculoskeletal"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 580 & diabetic_data$diag_3_num <= 629 | diabetic_data$diag_3_num == 788] <- "Genitourinary"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 140 & diabetic_data$diag_3_num <= 239] <- "Neoplasms"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 1 & diabetic_data$diag_3_num <= 139] <- "Infectious"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num >= 290 & diabetic_data$diag_3_num <= 319] <- "Mental Disorders"
+diabetic_data$diag_3_group[diabetic_data$diag_3_num %in% c(780, 781, 784) | (diabetic_data$diag_3_num >= 790 & diabetic_data$diag_3_num <= 799)] <- "Other"
+diabetic_data$diag_3_group[is.na(diabetic_data$diag_3_group)] <- "Unknown"
+
+dim(diabetic_data)
+```
+
+</details>
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The original diagnosis featuers diag_1, diag_2, and diag_3 were removed after creating grouped versions of each diagnosis using ICD-9 code ranges. These new groupings simplify the complexity of hundreds of diagnosis codes into broader clinical categories like *Circulatory*, *Diabetes*, and *Injury*. This transformation helps reduce high cardinality and potential noise, making the data more suitable for building models. The intermediate columns used during the transformation (such as prefixes and numeric conversions) were also dropped to keep the dataset clean and focused on meaningful features.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+#drop original diagnosis columns: diag_1, diag_2, diag_3
+diabetic_data <- diabetic_data %>% select(-c(diag_1, diag_2, diag_3))
+
+
+#drop helper columns used for processing
+diabetic_data <- diabetic_data %>% select(-c(diag_1_prefix, diag_2_prefix, diag_3_prefix))
+diabetic_data <- diabetic_data %>% select(-c(diag_1_num, diag_2_num, diag_3_num))
+
+dim(diabetic_data)
+```
+
+</details>
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+As mentioned earlier, some values in the diagnosis featuers could not be mapped to any known ICD-9 category and were labeled as "Unknown." Since these values do not carry meaningful clinical information and given the large size of the dataset, it was decided to remove the corresponding observation. Specifically, "Unknown" appeared in diag_1_group (10,230 records), diag_2_group (18,887 records), and diag_3_group (21,383 records). Removing these observations helps ensure cleaner inputs for modeling and reduces the risk of introducing noise or ambiguity during training. As a result, the dataset was reduced from 98,052 to 56,673 observations.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+diabetic_data$diag_1_group[diabetic_data$diag_1_group == "Unknown"] <- NA
+diabetic_data$diag_2_group[diabetic_data$diag_2_group == "Unknown"] <- NA
+diabetic_data$diag_3_group[diabetic_data$diag_3_group == "Unknown"] <- NA
+
+diabetic_data <- na.omit(diabetic_data)
+
+#check new dimensions
+dim(diabetic_data)
+```
+
+</details>
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Based on the summary of unique values and a review of the dataset, two features were dropped: discharge_disposition_id (26 unique values) and admission_source_id (15 unique values). Although these columns are stored as numeric values, they actually represent nominal categories (e.g., source of admission, discharge status) . Keeping these features would require encoding them into many sub-features using one-hot encoding. This could increase dimensionality and make the model more complex, especially since we don’t have labels explaining what each ID value represents. More importantly, using them directly in models (especially linear models or distance-based models like KNN) can confuse the model, as it might interpret the numerical IDs incorrectly. For example, it may think that ID 4 is twice as important as ID 2, which is not true. Furthermore, all character-type features were converted to factors to ensure categorical variables are properly recognized and interpreted by statistical models.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+diabetic_data <- diabetic_data %>% select(-c(discharge_disposition_id, admission_source_id))
+dim(diabetic_data)
+```
+
+```{r}
+#convert all character columns to factors
+for (col in names(diabetic_data)) {
+  if (class(diabetic_data[[col]]) == "character") {
+    diabetic_data[[col]] <- as.factor(diabetic_data[[col]])
+  }
+}
+
+#show which columns are now factors
+str(diabetic_data)
+```
+
+</details>
+:::
+
+##### **Identify and Handle Outliers**
+
+::: {style="text-align: justify; font-size: 10pt;"}
+To further clean and prepare the dataset for modeling, dataset outliers shall be identified and appropriately handled to reduce outliers impact on model training, model performance, and improve the robustness of predictive results. The dataset numerical features were examined for potential outliers using the Interquartile Range $IQR$ method. This method uses IQR to count the number of outliers in each numeric feature and stores the results in a data-frame for further analysis and visualization. The numerical features in the dataset were first identified using `is.numeric()` function. Each numeric feature is processed through the $IQR$ outlier detection method: calculating the first quartile $Q1$, third quartile $Q3$, the lower and upper bounds (defined as $Q1 -1.5 × IQR$ and $Q3 + 1.5 × IQR$, respectively).
+
+The boxplots below provides a comparative view of the numerical features with outliers that were identified by the IQR method. Features such as num_lab_procedures, num_medications, and various visits (number_emergency, number_inpatient, number_outpatient) exhibit a clear right-skewedness distribution with a large number of high-end outliers. These features may need special treatment before normalization or modeling to avoid bias in the results.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+#identify numeric columns
+numeric_cols <- diabetic_data %>% select(where(is.numeric))
+
+#loop over numeric columns and calculate outliers using IQR
+outlier_summary <- numeric_cols %>%
+  map_df(~{
+    Q1 <- quantile(.x, 0.25)
+    Q3 <- quantile(.x, 0.75)
+    IQR <- Q3 - Q1
+    lower_bound <- Q1 - 1.5 * IQR
+    upper_bound <- Q3 + 1.5 * IQR
+    outlier_count <- sum(.x < lower_bound | .x > upper_bound)
+    tibble(Outlier_Count = outlier_count)
+  }, .id = "Feature") %>%
+  arrange(desc(Outlier_Count))
+```
+
+```{r}
+#display table using kable
+kable(outlier_summary, caption = "Numerical Features Outliers (Using IQR)") %>%
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+</details>
+
+```{r, fig.align='center', fig.width=6, fig.height=4}
+#reshape to long format for ggplot
+diabetic_data_long <- diabetic_data[, outlier_summary$Feature] %>%
+  mutate(row_id = row_number()) %>%
+  pivot_longer(cols = -row_id, names_to = "Feature", values_to = "Value")
+
+#plot boxplot using ggplot
+p <- ggplot(diabetic_data_long, aes(x = Feature, y = Value, color = Feature)) +
+  geom_boxplot() +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.y = element_text(size = 10),
+    axis.text.x = element_text(angle = 40),
+    plot.title = element_text(face = "bold", size = 10, hjust = 0.3),
+    legend.position = "none"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.1))) +
+  labs(
+    title = "Numeric Features with Outliers",
+    x = "Feature",
+    y = "Value"
+  )
+
+#make plot interactive
+ggplotly(p)
+```
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+To handle outliers, we iterated over all numeric variables and marked observations containing an outlier for easier identification. Since normalization (like Min-Max scaling) is highly sensitive to extreme values the presence of outliers in the dataset will have an extreme impact. If we normalize before removing outliers, the min and max values will be skewed, and most of the data will be squished into a narrow range near 0, making it harder for the model to learn from the majority of the data. Thus, observations with outliers values are removed resulting in a dataset with 39,304 observations and 43 features.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+#create a logical index of rows to keep (initialize with TRUEs)
+keep_rows <- rep(TRUE, nrow(diabetic_data))
+
+#loop over numeric columns and mark rows with outliers
+for (col in names(numeric_cols)){
+  values <- diabetic_data[[col]]
+  Q1 <- quantile(values, 0.25)
+  Q3 <- quantile(values, 0.75)
+  IQR <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+
+  #identify outliers for this feature
+  outlier_mask <- values < lower_bound | values > upper_bound
+  
+  #mark FALSE for rows that are outliers in this column
+  keep_rows <- keep_rows & !outlier_mask
+}
+
+#apply the filter once
+diabetic_data <- diabetic_data[keep_rows, ]
+
+#check new dimensions
+dim(diabetic_data)
+```
+
+</details>
+:::
+
+##### **Normalization**
+
+::: {style="text-align: justify; font-size: 10pt;"}
+*Min-Max normalization* is applied to selected numeric features as they have different scales and large ranges, which could unfairly influence models that are sensitive to feature magnitude, such as KNN or logistic regression. Based on the output of the summary() function, it was observed that the following six features had relatively high maximum values or wide ranges: num_lab_procedures, num_medications, number_outpatient, number_emergency, number_inpatient, and number_diagnoses. These features were normalized using Min-Max scaling, which transforms their values to fall between 0 and 1. This ensures that no single feature dominates the learning process due to having larger numeric values. Features that had small ranges or represented categorical values (such as admission_type_id) were left unchanged, as normalization is not meaningful or necessary in those cases.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+normalize <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)))
+}
+
+#apply normalization to selected features
+diabetic_data$num_lab_procedures   <- normalize(diabetic_data$num_lab_procedures)
+diabetic_data$num_medications      <- normalize(diabetic_data$num_medications)
+diabetic_data$number_outpatient    <- normalize(diabetic_data$number_outpatient)
+diabetic_data$number_emergency     <- normalize(diabetic_data$number_emergency)
+diabetic_data$number_inpatient     <- normalize(diabetic_data$number_inpatient)
+diabetic_data$number_diagnoses     <- normalize(diabetic_data$number_diagnoses)
+```
+
+</details>
+:::
+
+## 4. Explore and Visualize
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Exploratory Data Analysis (EDA) has been conducted on the cleaned dataset to gain a comprehensive insights into the dataset, uncover patterns, and identify modeling strategies. The analysis focuses the target variable readmitted and the dataset features that are potentially associated with readmission status, contributing to the classification goal to predict diabetic patient readmission status within 30 days of discharge.
+:::
+
+##### **Target Variable Distribution**
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The bar chart below visualizes the distribution of the target variable readmitted. It can be noted that more that 50% of patients were not readmitted, around 30% of patients were readmitted after 30 days, and only 10% were readmitted within 30 days. The bar chart reveals a significant class imbalance, where the high-risk class \<30 being the minority class. This class imbalance highlights the need for class weights adjustment during modeling to improve classifier sensitivity.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+<details>
+
+<summary>Code</summary>
+
+```{r}
+#summary table with three columns and rename them as follow
+readmit_dist <- diabetic_data %>%
+  dplyr::count(readmitted, name = "Total_Patients") %>%
+  dplyr::mutate(
+    Proportion = Total_Patients / sum(Total_Patients),
+    Percentage = percent(Proportion, accuracy = 1)
+  ) %>%
+  rename(`Readmission Category` = readmitted) %>%
+  select(`Readmission Category`, Total_Patients, Percentage)
+```
+
+</details>
+
+```{r, fig.align='center', fig.width=6, fig.height=4}
+#plot readmission class distribution
+p <- ggplot(readmit_dist, aes(x = reorder(`Readmission Category`, -Total_Patients), y = Total_Patients, fill = `Readmission Category`)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(
+    aes(label = paste0(Percentage, "\n(", comma(Total_Patients), ")")),
+    vjust = -0.3,
+    size = 2,
+    fontface = "bold"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.1))) +
+  labs(
+    title = "Distribution of Readmission Status",
+    x = "Readmission Category",
+    y = "Number of Patients"
+  ) +
+  theme_minimal(base_size = 10)+
+   theme(
+    plot.title = element_text(face = "bold", size = 10, hjust = 0.5))
+
+#make plot interactive
+ggplotly(p, width = 600, height = 400)
+```
+:::
+
+##### **Patients Demographic Composition**
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Patients demographic features such as gender, age, and race were analyzed to uncover readmission patterns and understand where the bulk of readmissions is coming from. The figure below highlights that the gender distribution is relatively balanced between males and females, with similar readmission patterns, indicating no major difference. For age, most patients are between 50 and 80 years old, and that’s where we see the highest readmission counts, indicating that age is a possible factor for impacting readmission status. Caucasian patients make up the largest racial group within the dataset, explaining their higher number of readmission. However, this reflects population volume rather than higher risk of readmission; therefore, proportions analysis was also conducted to provide a more accurate comparison.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, fig.align='center'}
+#gender plot
+p1 <- ggplot(diabetic_data, aes(x = gender, fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Gender",
+    fill = "Readmitted"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.2),
+    legend.position = "right"
+  )
+
+#age plot
+p2 <- ggplot(diabetic_data, aes(x = age, fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Age",
+    fill = "Readmitted"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.2),
+    axis.text.x = element_text(angle = 40, hjust = 0.2)
+  )
+
+#race plot
+p3 <- ggplot(diabetic_data, aes(x = race, fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Race",
+    fill = "Readmitted"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.2),
+    axis.text.x = element_text(angle = 40, hjust = 0.2)
+  )
+
+#combine plots horizontally and make plot interactive
+subplot_combined <- subplot(
+  ggplotly(p1),
+  ggplotly(p2) %>% layout(showlegend = FALSE),
+  ggplotly(p3) %>% layout(showlegend = FALSE),
+  nrows = 1,
+  shareX = FALSE,
+  shareY = FALSE,
+  titleX = TRUE,
+  titleY = FALSE
+) %>%
+  layout(
+    title = list(
+      text = "Patient Readmissions by Gender, Age, and Race",
+      x = 0.5,
+      xanchor = "center",
+      font = list(size = 16, family = "Arial", color = "#333333")
+    ),
+    annotations = list(
+      list(
+        text = "Number of Patients",
+        x = 0,
+        xref = "paper",
+        y = 0.5,
+        yref = "paper",
+        showarrow = FALSE,
+        font = list(size = 12),
+        textangle = -90
+      )
+    )
+  )
+
+#display the final result
+subplot_combined
+```
+:::
+
+##### **Patient Profile Comparison**
+
+::: {style="text-align: justify; font-size: 10pt;"}
+The radar chart below provides a comparative overview of how patient profiles differ across the three readmission categories. Patients readmitted within 30 days exhibit higher counts across almost every variable, including number of medications, length of hospital stay, emergency room visits, and inpatient encounters, suggesting a more complicated medical profile. In contrast, patients who were not readmitted show overall lower values, with slight exception on the in the number of procedures, which could just point to more planned preventive care or early interventions.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, fig.align='center'}
+#get the average profile for each readmission group
+radar_data <- diabetic_data %>%
+  group_by(readmitted) %>%
+  summarise(
+    Medications = mean(num_medications, na.rm = TRUE),
+    Procedures = mean(num_procedures, na.rm = TRUE),
+    TimeInHospital = mean(time_in_hospital, na.rm = TRUE),
+    ERVisits = mean(number_emergency, na.rm = TRUE),
+    InpatientVisits = mean(number_inpatient, na.rm = TRUE),
+    OutpatientVisits = mean(number_outpatient, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#fmsb needs the first two rows to define the range (max + min) of the axes
+radar_chart <- rbind(
+  apply(radar_data[,-1], 2, max),
+  apply(radar_data[,-1], 2, min),
+  radar_data[,-1]
+)
+
+#convert to numeric
+radar_chart <- as.data.frame(lapply(radar_chart, as.numeric))
+rownames(radar_chart) <- c("Max", "Min", radar_data$readmitted)
+
+#set custom color-blind friendly colors
+custom_colors <- c("#21908C", "#440154", "#5DC863")
+colors_fill <- scales::alpha(custom_colors, 0.3)
+
+#plot radar chart
+radarchart(
+  radar_chart,
+  axistype = 1,
+  pcol = custom_colors,
+  pfcol = colors_fill,
+  plwd = 2,
+  plty = 1,
+  cglcol = "grey",
+  cglty = 1,
+  axislabcol = "grey30",
+  vlcex = 0.85,
+  title = "Patient Profile Comparison by Readmission Status"
+)
+
+#add a legend to keep it readable
+legend("topright", legend = radar_data$readmitted,
+       bty = "n", pch = 20, col = custom_colors, text.col = "black", cex = 0.9)
+```
+:::
+
+##### **Diagnosis-Based Readmission Patterns**
+
+::: {style="text-align: justify; font-size: 10pt;"}
+This chart shows how different diagnosis groups appear across the three diagnosis levels, broken down by readmission status. Circulatory and Other are the most common across all levels, especially in the primary diagnosis (diag_1). Conditions like Diabetes and Neoplasms show up more often as secondary or tertiary issues, suggesting they’re not always the main reason for admission but still play a role in patient case. To simplify analysis, we grouped the original ICD-9 diagnosis codes into broader clinical categories (e.g., Circulatory, Respiratory, Diabetes, etc.). This makes the chart easier to interpret and helps highlight patterns that would be hard to see using raw codes. Overall, this breakdown gives a better sense of how underlying conditions are layered across patient records and how they relate to readmission trends.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, fig.align='center'}
+#combine diagnosis group variables for plotting
+diag_long <- diabetic_data %>%
+  select(readmitted, diag_1_group, diag_2_group, diag_3_group) %>%
+  pivot_longer(cols = starts_with("diag_"), names_to = "Diagnosis_Level", values_to = "Diagnosis_Group")
+
+#clean label names
+diag_long$Diagnosis_Level <- recode(diag_long$Diagnosis_Level,
+                                    diag_1_group = "Diagnosis 1",
+                                    diag_2_group = "Diagnosis 2",
+                                    diag_3_group = "Diagnosis 3")
+
+#plot bar charts
+p <- ggplot(diag_long, aes(x = fct_infreq(Diagnosis_Group), fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) +  #color-blind friendly
+  labs(
+    title = "Readmission Count by Diagnosis Level (diag_1, diag_2, diag_3)",
+    x = "Diagnosis Group",
+    y = "Number of Patients",
+    fill = "Readmitted"
+  ) +
+  facet_wrap(~ Diagnosis_Level, ncol = 1, scales = "free_x") +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 35, hjust = 1, face = "bold"),
+    strip.text = element_text(face = "bold"),
+    legend.position = "right"
+  )
+ggplotly(p, height = 600)
+```
+:::
+
+##### **Correlation Between Numeric Variables**
+
+::: {style="text-align: justify; font-size: 10pt;"}
+This heatmap gives a snapshot of how the numeric features in our dataset are related — and what stands out is that most of them are only somehow correlated, meaning they’re providing different types of information rather than repeating the same signal -not redundant-. There’s no major redundancy. Most variables aren’t closely connected together, as each brings unique value. More inpatient visits leads to \> higher total encounters (0.90) \> expected. More time in the hospital usually leads to \> more lab tests and procedures \> moderate correlations here (\~0.3 to 0.5). Emergency visits have a link to inpatient stays \> patients often go from ER to being admitted.
+:::
+
+::: {style="text-align: justify; font-size: 10pt;"}
+```{r, fig.align='center', fig.width=6, fig.height=4}
+#identify numeric columns
+numeric_vars <- diabetic_data[sapply(diabetic_data, is.numeric)]
+numeric_vars <- numeric_vars[, colSums(!is.na(numeric_vars)) > 0]
+
+
+#prepare correlation matrix
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+cor_df <- melt(cor_matrix)
+
+#base heatmap with better visual harmony
+p <- ggplot(cor_df, aes(x = Var2, y = Var1, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(value, 2)), color = "black", size = 3.5) +
+  scale_fill_gradient2(
+    low = "#440154",      # red for negative
+    mid = "white",        # neutral
+    high = "#21908C",     # green for positive
+    midpoint = 0,
+    limits = c(-1, 1),
+    name = "Correlation"
+  ) +
+  labs(
+    title = "Correlation Between Patient Numeric Features",
+    x = NULL, y = NULL
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+    axis.text.y = element_text(face = "bold"),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+ggplotly(p, width = 600, height = 400)
+```
+:::
+
+##### **EDA Summary & Insights**
+
+::: {.callout-note title="EDA Summary & Insights"}
+The EDA supported break down factors that most likely influence hospital readmission among diabetic patients. Though some findings confirmed our initial expectations of the underlying dataset, others revealed more interesting patterns.
+
+Starting with the target variable rundown, it is very clear that the majority of patient were not readmitted, however, a noticeable portion returned after 30 days. On the other hand, a smaller subset of patients returned within 30 days, which confirmed a class imbalance that will be accounted for at later stage when building the classification model.
+
+Demographics such as gender, race and age showcased some variation. Older age group more specifically (60-80) tend to dominate the readmission scene, which matches with chronical conditions such as diabetes.
+
+The diagnostic groups helped tremendously with narrowing down what to focus on. Circulatory and Respiratory diagnoses appear more frequently and subsequently have higher readmission. On the other hand, conditions such as Neoplasms (cancer) suprisngly showed low readmission, and that is likely due to follow-ups being handled by outpatient or via specialized clinic.
+
+Finally, the correlation heatmaps confirmed that a low correlation among numerical features, which is ideal to build a classification model using the underlying dataset.
+
+These findings gave us a solid foundation to address the evaluation plan and model selection.
+:::
+
+## 5. Evaluation Plan
+
+::: {style="text-align: justify; font-size: 10pt;"}
+As the exploratory data analysis of the target variable revealed a clear class imbalance, with the “NO” readmission class accounting for approximately 50% of the entire dataset, evaluation metrics that go beyond accuracy alone are crucial for properly evaluating model performance. To provide a more comprehensive assessment of model performance across all classes, below are the selected evaluation metrics:
+
+-   **Accuracy:** This metric is used to measure the overall correctness of predictions across all samples, proportion of correct predictions. Accuracy is selected as a baseline comparison measure since it is a quick indicator of overall model performance, but can be misleading when classes are imbalanced.
+
+-   **Precision:** This metric measures the proportion of predicted positives that were actually correct. Precision for each class `(Precision_NO, Precision<30, Precision>30)`. Evaluates how accurate the model's predictions are when it predicts a particular class. Precision is important metric when false positives are costly. Thus, this metric is selected because misclassifying a low-risk patient for a high-risk patient is costly for the classification task.
+
+-   **Recall (Sensitivity):** This metric measures model's ability to detect positive cases. Recall for each class `(Recall_NO, Recall<30, Recall>30)`. Assesses the model’s ability to correctly identify actual instances within each class. This metric is chosen because it helps assess the model’s capability to distinguish between different readmission timeframes, which is crucial for clinical decision-making and targeted interventions.
+
+-   **F1 Score:** This metric measures the harmonic mean of precision and recall, capturing the balance between the two. F1 Score for each class measures the harmonic mean of Precision and Recall, providing a balanced evaluation for each class. In imbalanced datasets, F1 is more informative than accuracy as it balances the trade-off between precision and recall, giving a more realistic measure of a model's performance on the minority class.
+
+-   **Macro F1 Score:** This metric measures the arithmetic mean of the F1 scores across all three classes, giving equal weight to each class and offering a fair assessment of overall performance. Macro F1 Score treats all classes equally, making it a proper measure of performance for imbalanced dataset, giving insight into whether the model is biased toward the majority class.
+
+Given that this task represents a typical multi-class classification problem with imbalanced class distribution (e.g., NO cases are significantly more common than \<30 cases), relying solely on Accuracy is insufficient for a comprehensive evaluation. Therefore, we emphasize per-class Precision, Recall, and F1 scores, which are particularly important for assessing how well the model performs on the high-risk class of early readmission (\<30). Additionally, the use of Macro F1 Score helps mitigate the dominance of the majority class and provides a more representative evaluation of model performance.
+:::
+
+## 6. Classification Models
+
+::: {style="text-align: justify; font-size: 10pt;"}
+Five classification models are selected for fitting and evaluating the dataset, each suited to the "Diabetes 130-US Hospitals for Years 1999-2008" dataset characteristics and classification goals. These classification models are:
+
+1.  **Decision Tree:** Decision Tree are well-suited for our diabetes dataset with mixed-type variables and do not require standardization. The model offers high interpretability by allowing traceability of decision paths. It also supports class weighting, which can help improve detection of underrepresented classes such as \<30. Evaluation will focus on class-wise recall and macro-averaged F1 score to assess balanced performance.
+
+2.  **Random Forest:** Random Forest aggregates multiple decision trees to reduce overfitting and better capture complex feature interactions (`num_inpatient`, `num_lab_procedures`). It is robust to feature transformations, handles class imbalance effectively, and provides variable importance rankings. Model evaluation includes macro F1, and precision-recall to capture both overall and minority class performance.
+
+3.  **Support Vector Machine (SVM):** SVM is suitable for our high-dimensional dataset and is capable of learning non-linear decision boundaries via kernel functions. With class weighting enabled`(class_weight='balanced')`, SVM can better manage imbalance, particularly for the \<30 class. Performance will be evaluated using precision, recall, F1, macro F1, AUC, with emphasis on the minority class.
+
+4.  **k-Nearest Neighbors (k-NN):** k-NN is a distance-based, non-parametric method that relies on similarity across feature space. As it is sensitive to feature scaling, standardization was applied. While k-NN serves as a strong baseline, it may favor majority classes. Therefore, it is used primarily for benchmarking, with evaluation based on per-class recall, per-class precision ,per-class F1, macro F1, Weighted F1 Score and MCC.
+
+5.  **Logistic Regression:** Logistic regression is appropriate for modeling multi-class classification tasks with interpretable, probability-based outputs. It also supports class weighting, which is helpful for addressing class imbalance. Evaluation metrics includes accuracy, sensitivity, specificity, F1 score, macro F1 and weighted F1 score in both binary and multi-class settings.
+:::
+
+## 7. Innovation
+
+::: {style="text-align: justify; font-size: 10pt;"}
+This project team made a deliberate effort to go beyond the project's requirements and demonstrated innovation across the project plan and EDA. These innovations include: the selection of a challenging and novel dataset that meets all 5 dataset selection guidelines, inclusive and accessible visuals (all plots used color-blind–friendly colors and plots were made interactive with ggplotly to support dynamic exploration), domain-related feature engineering (transformation of the diagnosis features using ICD-9 codes map), and the use of kableExtra library intuitively displaying table results.
+:::
+
+## 8. References

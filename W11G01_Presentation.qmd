@@ -1,0 +1,443 @@
+---
+format:
+  revealjs:
+    auto-slide: 20000
+    width: 1920
+    height: 1080
+    embed-resources: true
+    toc: false
+    controls: true
+    slide-number: true
+    transition: fade
+    theme:
+        - simple
+        - style/custom_styles.css
+    auto-stretch: false
+    center: true
+    footer: "<span style='font-size: 13px;'>STAT5003 W11G01</span>"
+---
+
+```{r}
+#load libraries
+library(tidyverse)  #for data science, loads other core libraries
+library(kableExtra) #for table styling
+library(scales)     #for scaling axes
+library(reshape2)   #for reshaping data
+library(patchwork)  #for combining ggplots
+library(plotly)     #for interactive ggplots
+library(knitr)
+
+#load the dataset
+diabetic_data <- read_csv("dataset/diabetic_data.csv", show_col_types = FALSE)
+cleaned_diabetic_data <- read_csv("dataset/diabetic_data_from_code.csv", show_col_types = FALSE)
+cleaned_diabetic_data2 <- read_csv("dataset/cleaned_diabetes_data2.csv", show_col_types = FALSE)
+```
+
+## Welcome to Our Presentation {.custom-title-white data-background-image="images/title_slide_bg.png" data-background-size="cover"}
+
+<!-- Slide 2 Team -->
+## Team {.custom-title-white data-background-image="images/image_team_slide.png" data-background-size="cover"}
+
+
+<!-- Slide 3 Problem -->
+## What is the problem? Why it matters? <br> {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+
+::: {.custom-text .fragment .fade-in}
+Diabetes is a lifelong condition requiring constant care <br>
+:::
+
+::: {style="display: flex;"}
+<div class="vertical-images ">
+  <img src="images/image_impact_patient.png" class="fragment fade-in">
+  <br>
+  <img src="images/image_impact_hospital.png" class="fragment fade-in">
+</div>
+:::
+
+::: {.custom-text-large .fragment .fade-in}
+Can we predict who is most at risk? who is likely to come back?
+:::
+
+
+<!-- Slide 4 Goal -->
+## What do we aim to achive? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+
+::: {.custom-text-large-dark .fragment .fade-in}
+Build a data-driven machine learning model that <br>**Predict if a diabetic patient will return to the hospital within 30 days of discharge**
+:::
+
+::: {.custom-text .fragment .fade-in}
+<br>Use hospital data to uncover useful patterns and improve:
+<img src="images/image_improve.png" width="1050px" style="display: block; margin: auto; padding-top: 50px;">
+::: 
+
+
+<!-- Slide 4 Data -->
+## What Data are we working with? {.custom-title data-background-image="images/image_bg_data.png" data-background-size="cover"}
+
+::: {.chart-right .fragment .fade-in}
+```{r, fig.width=8, fig.height=8}
+#pie chart for dataset attributes type
+cat_cols <- diabetic_data |> dplyr::select(where(is.character)) |> names()
+num_cols <- diabetic_data |> dplyr::select(where(is.numeric)) |> names()
+
+var_types <- data.frame(
+  type = c("Categorical", "Numerical"),
+  count = c(length(cat_cols), length(num_cols))
+)
+
+#add percentage and label
+var_types <- var_types %>%
+  mutate(
+    percent = round(count / sum(count) * 100, 1),
+    label = paste0(type, "\n", percent, "%")
+  )
+
+#plot
+ggplot(var_types, aes(x = "", y = count, fill = type)) +
+  geom_col(width = 1) +
+  coord_polar("y") +
+  theme_void() +
+  labs(title = "Hospital Data Type") +
+  geom_text(
+    aes(label = label),
+    position = position_stack(vjust = 0.5),
+    size = 8,
+    color = "white"
+  ) +
+  scale_fill_manual(values = c("#2d718e", "#00a99d")) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 25, color = "#4575a6"),
+    legend.position = "none",
+    plot.background = element_rect(fill = "transparent", color = NA),
+    panel.background = element_rect(fill = "transparent", color = NA)
+  )
+```
+:::
+
+::: {.footer-note}
+Data obtained from the US Health Facts Database
+:::
+
+
+<!-- Slide 5 EDA 1 -->
+## What does the data initially tells us? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+
+::: {.custom-text .fragment .fade-in}
+We explored the data to understand it better, uncover patterns, and find clues that could help us build a model to predict hospital readmissions<br>
+::: 
+
+::: {style="display: flex; justify-content: space-between; align-items: flex-start;"}
+
+<div style="width: 60%;">
+::: {.chart-left .fragment .fade-in}
+```{r, fig.width=16, fig.height=13, echo=FALSE}
+#summary table with three columns and rename them as follow
+readmit_dist <- cleaned_diabetic_data %>%
+  dplyr::count(readmitted, name = "Total_Patients") %>%
+  dplyr::mutate(
+    Proportion = Total_Patients / sum(Total_Patients),
+    Percentage = percent(Proportion, accuracy = 1)
+  ) %>%
+  rename(`Readmission Category` = readmitted) %>%
+  select(`Readmission Category`, Total_Patients, Percentage)
+
+#plot readmission class distribution
+p <- ggplot(readmit_dist, aes(x = reorder(`Readmission Category`, -Total_Patients), y = Total_Patients, fill = `Readmission Category`)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(
+    aes(label = paste0(Percentage, "\n")),
+    vjust = 0.5,
+    color = "#002c5c",
+    size = 5,
+    fontface = "bold"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) +  # color-blind friendly
+  scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.1))) +
+  labs(
+    title = "Distribution of Readmission Status",
+    x = "Readmission Category",
+    y = "Number of Patients"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, color = "#4575a6"),
+    panel.background = element_rect(fill = "white", color = NA),  # White plot background
+    plot.background = element_rect(fill = "white", color = NA),   # White outer background
+    panel.grid.major = element_line(color = "gray90"),            # Light gray grid lines
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(color = "gray60"),                   # Gray axis lines
+    axis.ticks = element_line(color = "gray60")  
+  )
+ggplotly(p)
+```
+:::
+</div>
+
+<div style="width: 40%;"> 
+::: {.custom-text-dark .fragment .fade-in}
+<br><br>Key Findings:<br>
+::: 
+
+::: {.custom-list .fragment .fade-in}
+-   Over half of the patients were not readmitted.
+-   Only 11% of the patients returned within 30 days.
+:::
+
+::: {.custom-text-note  .fragment .fade-in}
+Considering the group of interest (those readmitted within 30 days) is relatively small, modules are adjusted not to overlook them
+:::
+
+</div>
+:::
+
+<!-- Slide 6 EDA 2 -->
+## What does the data initially tells us? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+
+::: {.custom-text}
+We explored the data to understand it better, uncover patterns, and find clues that could help us build a model to predict hospital readmissions<br>
+::: 
+
+::: {.chart-left .fragment .fade-in}
+```{r, fig.width=31, fig.height=13}
+#gender plot
+p1 <- ggplot(cleaned_diabetic_data, aes(x = gender, fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Gender",
+    fill = "Readmitted"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, color = "#4575a6"),
+    legend.position = "right"
+  )
+
+#age plot
+p2 <- ggplot(cleaned_diabetic_data, aes(x = age, fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Age",
+    fill = "Readmitted"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, color = "#4575a6"),
+    axis.text.x = element_text(angle = 40, hjust = 0.2)
+  )
+
+#race plot
+p3 <- ggplot(cleaned_diabetic_data, aes(x = race, fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Race",
+    fill = "Readmitted"
+  ) +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) + #color-blind friendly
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, color = "#4575a6"),
+    axis.text.x = element_text(angle = 30, hjust = 0.2)
+  )
+
+#convert plots to plotly objects
+gp1 <- ggplotly(p1)
+gp2 <- ggplotly(p2)
+gp3 <- ggplotly(p3)
+
+#manually remove duplicated legends from p2 and p3
+for (i in seq_along(gp2$x$data)) {
+  gp2$x$data[[i]]$showlegend <- FALSE
+}
+for (i in seq_along(gp3$x$data)) {
+  gp3$x$data[[i]]$showlegend <- FALSE
+}
+
+#combine plots horizontally and make plot interactive
+subplot_combined <- subplot(
+  gp1,
+  gp2,
+  gp3,
+  nrows = 1,
+  shareX = FALSE,
+  shareY = FALSE,
+  titleX = TRUE,
+  titleY = FALSE
+) %>%
+  layout(
+    title = list(
+      text = "Patient Readmissions by Gender, Age, and Race",
+      x = 0.5,
+      xanchor = "center",
+      font = list(size = 18, color = "#4575a6", fontface = "bold")
+    ),
+    annotations = list(
+      list(
+        text = "Number of Patients",
+        x = 0,
+        xref = "paper",
+        y = 0.5,
+        yref = "paper",
+        showarrow = FALSE,
+        font = list(size = 12),
+        textangle = -90
+      )
+    )
+  )
+
+#display the final result
+subplot_combined
+```
+:::
+
+
+<!-- Slide 7 EDA 3 -->
+## What does the data initially tells us? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+
+::: {.custom-text}
+We explored the data to understand it better, uncover patterns, and find clues that could help us build a model to predict hospital readmissions<br>
+::: 
+
+::: {style="display: flex; align-items: flex-start;"}
+
+<div style="width: 60%;">
+::: {.chart-left .fragment .fade-in}
+```{r, fig.width=16, fig.height=13}
+#combine diagnosis group variables for plotting
+diag_long <- cleaned_diabetic_data %>%
+  select(readmitted, diag_1_group, diag_2_group, diag_3_group) %>%
+  pivot_longer(cols = starts_with("diag_"), names_to = "Diagnosis_Level", values_to = "Diagnosis_Group")
+
+#clean label names
+diag_long$Diagnosis_Level <- recode(diag_long$Diagnosis_Level,
+                                    diag_1_group = "Diagnosis 1",
+                                    diag_2_group = "Diagnosis 2",
+                                    diag_3_group = "Diagnosis 3")
+
+#plot bar charts
+p <- ggplot(diag_long, aes(x = fct_infreq(Diagnosis_Group), fill = readmitted)) +
+  geom_bar(position = "dodge") +
+  scale_fill_viridis_d(option = "D", begin = 0.1, end = 0.9) +  #color-blind friendly
+  labs(
+    title = "Patient Readmission by Diagnosis",
+    x = "Diagnosis Group",
+    y = "Number of Patients",
+    fill = "Readmitted"
+  ) +
+  facet_wrap(~ Diagnosis_Level, ncol = 1, scales = "free_x") +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, color = "#4575a6"),
+    axis.text.x = element_text(angle = 0, hjust = 1, face = "bold"),
+    strip.text = element_text(face = "bold"),
+    legend.position = "right"
+  )
+ggplotly(p)
+```
+:::
+</div>
+
+<div style="width: 40%;"> 
+::: {.custom-text-dark .fragment .fade-in}
+<br><br>Key Findings:<br>
+::: 
+
+::: {.custom-list .fragment .fade-in}
+-   Patient with circulatory and respiratory diagnoses are likely to be readmitted.
+-   Patient with cancer have low readmission rate, possibly due to intensive care.
+:::
+</div>
+:::
+
+
+<!-- Slide 9 Process -->
+## How can we predict readmissions? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+
+::: {.custom-text .fragment .fade-in}
+Following a well structured process to build different prediction modules
+<img src="images/process_full.png" width="1720px" style="display: block; padding-top: 55px;">
+:::
+
+
+<!-- Slide 10 Process -->
+## How can we predict readmissions? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+
+<img src="images/process_1.png" width="1720px" style="display: block; margin: auto;">
+
+
+<!-- Slide 11 Process -->
+## How can we predict readmissions? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+<img src="images/process_2.png" width="1720px" style="display: block; margin: auto;">
+
+
+<!-- Slide 12 Process -->
+## How can we predict readmissions? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+<img src="images/process_3.png" width="1720px" style="display: block; margin: auto;">
+
+
+<!-- Slide 13 Process -->
+## How can we predict readmissions? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+<img src="images/process_4.png" width="1720px" style="display: block; margin: auto;">
+
+
+<!-- Slide 14 Process -->
+## How can we predict readmissions? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+<img src="images/process_5.png" width="1720px" style="display: block; margin: auto;">
+
+
+<!-- Slide 15 Process -->
+## How can we predict readmissions? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+<img src="images/process_6.png" width="1720px" style="display: block; margin: auto;">
+
+
+<!-- Slide 16 Performance -->
+## How well the models predicted? {.custom-title data-background-image="images/image_bg2.png" data-background-size="cover"}
+::: {.custom-text .fragment .fade-in}
+Models performance was evaluated against statistical measures and performance metrics resulting in the following strengths and limitations<br>
+:::
+
+::: {style="display: flex; justify-content: center;"}
+<div class="vertical-fragment-images">
+  <img src="images/image_tree.png" width="1720px" class="fragment fade-in">
+  <img src="images/image_gbm.png" width="1720px" class="fragment fade-in">
+  <img src="images/image_svm.png" width="1720px" class="fragment fade-in">
+  <img src="images/image_knn.png" width="1720px" class="fragment fade-in">
+  <img src="images/image_reg.png" width="1720px" class="fragment fade-in">
+</div>
+:::
+
+<!-- Slide 17 Findings -->
+## What can we do with this? {.custom-title data-background-image="images/image_bg1.png" data-background-size="cover"}
+::: {.fragment .fade-in}
+::: {.custom-text-dark}
+<br>Key Findings:<br>
+::: 
+
+::: {.custom-list}
+-   Certain diagnosis and medications are linked with higher readmission risk.
+-   Some models performed well in identifying high-risk patients.
+-   Only a small group of patients were readmitted within 30 days.
+-   This made it harder to detect them for early readmissions.
+:::
+:::
+
+<!-- Slide 18 Findings -->
+## What is next? {.custom-title data-background-image="images/image_bg1.png" data-background-size="cover"}
+::: {.fragment .fade-in}
+::: {.custom-text-dark}
+<br>Opportunities for Improvement:<br>
+::: 
+
+::: {.custom-list}
+-   Collect more recent and richer data that has information on each readmissions status.
+-   Put the model to test by applying it in real world application. 
+-   Try advanced models or different combination of models.
+-   Work with healthcare professionals to validate results in real settings.
+:::
+:::
+
+
+<!-- Slide 19 Q&A -->
+## got any question you want to ask us?{.custom-title data-background-image="images/image_bg_qa.png" data-background-size="cover"}
+
